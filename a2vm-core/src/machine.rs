@@ -1,0 +1,224 @@
+use std::io;
+use std::mem;
+use std::path::Path;
+
+use crate::bus::Bus;
+use crate::cpu::Cpu;
+use crate::video::DisplayMode;
+
+/// Apple II emulator: CPU + memory + keyboard I/O.
+///
+/// Memory map (M2 minimal):
+///   $0000-$BFFF  48K RAM
+///   $C000        Keyboard latch (read: last key | bit7=strobe)
+///   $C010        Keyboard strobe clear (read/write: clears bit 7 of latch)
+///   $C011-$C04F  I/O stubs (read: $00)
+///   $C050-$C057  Display mode soft switches
+///   $C058-$C0FF  I/O stubs (read: $00)
+///   $C100-$CFFF  Slot ROM stubs (read: $00)
+///   $D000-$FFFF  12K ROM
+pub struct AppleII {
+    pub cpu: Cpu,
+    pub display: DisplayMode,
+    ram: [u8; 0xC000],        // 48K RAM
+    rom: [u8; 0x3000],        // 12K ROM ($D000-$FFFF)
+    rom_loaded: bool,
+    kbd_latch: u8,            // $C000: keyboard latch (bit 7 = strobe)
+}
+
+impl AppleII {
+    pub fn new() -> Self {
+        Self {
+            cpu: Cpu::new(),
+            display: DisplayMode::default(),
+            ram: [0; 0xC000],
+            rom: [0; 0x3000],
+            rom_loaded: false,
+            kbd_latch: 0,
+        }
+    }
+
+    /// Load a ROM file into $D000-$FFFF.
+    ///
+    /// Supported sizes:
+    ///   - 12K (12288): $D000-$FFFF directly (Apple II, Apple II+)
+    ///   - 16K (16384): $C000-$FFFF, uses $D000-$FFFF portion (Apple IIe)
+    ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
+    ///   - 32K (32768): Two 16K banks, uses first bank's $D000-$FFFF (Apple IIe)
+    pub fn load_rom(&mut self, path: &Path) -> io::Result<()> {
+        let data = std::fs::read(path)?;
+        match data.len() {
+            0x3000 => {
+                // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
+                self.rom.copy_from_slice(&data);
+            }
+            0x4000 => {
+                // 16K ROM → skip $C000-$CFFF, use $D000-$FFFF (Apple IIe)
+                self.rom.copy_from_slice(&data[0x1000..]);
+            }
+            0x5000 => {
+                // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
+                self.rom.copy_from_slice(&data[0x2000..]);
+            }
+            0x8000 => {
+                // 32K ROM → first 16K bank's $D000-$FFFF (Apple IIe)
+                self.rom.copy_from_slice(&data[0x1000..0x4000]);
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "ROM must be 12K, 16K, 20K, or 32K bytes, got {} ({:#X})",
+                        data.len(),
+                        data.len()
+                    ),
+                ));
+            }
+        }
+        self.rom_loaded = true;
+        Ok(())
+    }
+
+    /// Reset the CPU: reads the reset vector from $FFFC-$FFFD.
+    pub fn reset(&mut self) {
+        let mut cpu = mem::take(&mut self.cpu);
+        cpu.reset(self);
+        self.cpu = cpu;
+    }
+
+    /// Execute one CPU instruction. Returns cycles consumed.
+    pub fn step(&mut self) -> u32 {
+        let mut cpu = mem::take(&mut self.cpu);
+        let cycles = cpu.step(self);
+        self.cpu = cpu;
+        cycles
+    }
+
+    /// Run the CPU for at least `target` cycles. Returns actual cycles executed.
+    pub fn run_cycles(&mut self, target: u64) -> u64 {
+        let mut cpu = mem::take(&mut self.cpu);
+        let cycles = cpu.run(self, target);
+        self.cpu = cpu;
+        cycles
+    }
+
+    /// Simulate a key press: sets keyboard latch with strobe bit.
+    /// `ascii` should be the 7-bit ASCII value (e.g., 0x41 for 'A').
+    /// The latch stores `ascii | 0x80` (bit 7 = strobe).
+    pub fn key_press(&mut self, ascii: u8) {
+        self.kbd_latch = ascii | 0x80;
+    }
+
+    /// Read-only access to RAM (for video rendering).
+    pub fn ram(&self) -> &[u8] {
+        &self.ram
+    }
+
+    /// Peek at any address without side effects (for debug/status display).
+    pub fn peek(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0xBFFF => self.ram[addr as usize],
+            0xC000..=0xC00F => self.kbd_latch,
+            0xC010..=0xCFFF => 0,
+            0xD000..=0xFFFF => self.rom[(addr - 0xD000) as usize],
+        }
+    }
+}
+
+impl Bus for AppleII {
+    fn read(&mut self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0xBFFF => self.ram[addr as usize],
+            0xC000..=0xC00F => self.kbd_latch,
+            0xC010 => {
+                let val = self.kbd_latch;
+                self.kbd_latch &= 0x7F;
+                val
+            }
+            // Display mode soft switches (accent on read triggers side effect)
+            0xC050 => { self.display.text = false; 0 }
+            0xC051 => { self.display.text = true; 0 }
+            0xC052 => { self.display.mixed = false; 0 }
+            0xC053 => { self.display.mixed = true; 0 }
+            0xC054 => { self.display.page2 = false; 0 }
+            0xC055 => { self.display.page2 = true; 0 }
+            0xC056 => { self.display.hires = false; 0 }
+            0xC057 => { self.display.hires = true; 0 }
+            0xC011..=0xC0FF => 0x00,
+            0xC100..=0xCFFF => 0x00,
+            0xD000..=0xFFFF => self.rom[(addr - 0xD000) as usize],
+        }
+    }
+
+    fn write(&mut self, addr: u16, val: u8) {
+        match addr {
+            0x0000..=0xBFFF => self.ram[addr as usize] = val,
+            0xC010 => { self.kbd_latch &= 0x7F; }
+            // Display mode soft switches (write also triggers)
+            0xC050 => { self.display.text = false; }
+            0xC051 => { self.display.text = true; }
+            0xC052 => { self.display.mixed = false; }
+            0xC053 => { self.display.mixed = true; }
+            0xC054 => { self.display.page2 = false; }
+            0xC055 => { self.display.page2 = true; }
+            0xC056 => { self.display.hires = false; }
+            0xC057 => { self.display.hires = true; }
+            0xC000..=0xC0FF => {}
+            0xC100..=0xCFFF => {}
+            0xD000..=0xFFFF => {}
+        }
+    }
+}
+
+impl Default for AppleII {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ram_read_write() {
+        let mut apple = AppleII::new();
+        apple.write(0x0400, 0xAA);
+        assert_eq!(apple.read(0x0400), 0xAA);
+    }
+
+    #[test]
+    fn test_rom_write_ignored() {
+        let mut apple = AppleII::new();
+        apple.rom[0] = 0x42;
+        apple.write(0xD000, 0xFF); // should be ignored
+        assert_eq!(apple.read(0xD000), 0x42);
+    }
+
+    #[test]
+    fn test_keyboard_latch() {
+        let mut apple = AppleII::new();
+        apple.key_press(b'A'); // 0x41
+        assert_eq!(apple.read(0xC000), 0xC1); // 'A' | 0x80
+        assert_eq!(apple.read(0xC000), 0xC1); // still latched
+    }
+
+    #[test]
+    fn test_keyboard_strobe_clear() {
+        let mut apple = AppleII::new();
+        apple.key_press(b'A');
+        assert_eq!(apple.read(0xC000), 0xC1); // bit 7 set
+        apple.read(0xC010); // clear strobe
+        assert_eq!(apple.read(0xC000), 0x41); // bit 7 cleared
+    }
+
+    #[test]
+    fn test_peek_no_side_effects() {
+        let mut apple = AppleII::new();
+        apple.key_press(b'A');
+        assert_eq!(apple.peek(0xC000), 0xC1);
+        // peek at $C010 should NOT clear strobe
+        assert_eq!(apple.peek(0xC010), 0x00);
+        assert_eq!(apple.peek(0xC000), 0xC1); // strobe still set
+    }
+}
