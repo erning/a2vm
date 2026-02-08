@@ -1,0 +1,3 @@
+[workspace]
+members = ["a2vm-core"]
+resolver = "2"
