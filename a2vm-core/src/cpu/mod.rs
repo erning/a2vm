@@ -346,7 +346,7 @@ impl Cpu {
             Mnemonic::ASL => {
                 if mode == AddrMode::Accumulator {
                     self.p.set(C, self.a & 0x80 != 0);
-                    self.a = self.a << 1;
+                    self.a <<= 1;
                     self.p.set_nz(self.a);
                 } else {
                     let addr = self.addr_of(resolved);

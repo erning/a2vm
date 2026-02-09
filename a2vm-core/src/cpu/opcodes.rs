@@ -1,6 +1,7 @@
 use super::addressing::AddrMode;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[rustfmt::skip]
 pub enum Mnemonic {
     ADC, AND, ASL, BCC, BCS, BEQ, BIT, BMI,
     BNE, BPL, BRK, BVC, BVS, CLC, CLD, CLI,
@@ -23,6 +24,7 @@ pub struct OpcodeInfo {
 use AddrMode::*;
 use Mnemonic::*;
 
+#[rustfmt::skip]
 const fn op(mnemonic: Mnemonic, mode: AddrMode, cycles: u32, page_penalty: bool) -> OpcodeInfo {
     OpcodeInfo { mnemonic, mode, cycles, page_penalty }
 }
@@ -31,6 +33,7 @@ const fn ill() -> OpcodeInfo {
     op(ILL, Implied, 2, false)
 }
 
+#[rustfmt::skip]
 pub static OPCODES: [OpcodeInfo; 256] = [
     // 0x00
     op(BRK, Implied,    7, false), // 00
