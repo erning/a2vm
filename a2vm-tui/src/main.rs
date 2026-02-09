@@ -87,7 +87,7 @@ fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
                 }
             }
 
-            let ch = char::from_u32(0x2800 + bits as u32).unwrap();
+            let ch = char::from_u32(0x2800 + bits as u32).expect("valid braille codepoint");
             line.push(ch);
         }
         lines.push(line);
@@ -117,7 +117,7 @@ fn map_key(key: KeyEvent) -> Option<u8> {
         KeyCode::Char(c) => {
             let mut ascii = c as u8;
             // Apple II only has uppercase; convert lowercase
-            if ascii >= b'a' && ascii <= b'z' {
+            if ascii.is_ascii_lowercase() {
                 ascii -= 0x20;
             }
             Some(ascii)
@@ -201,9 +201,10 @@ fn main() -> io::Result<()> {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Char('c') => {
-                            // Restore terminal
-                            terminal::disable_raw_mode()?;
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
+                            // Restore terminal (best-effort: don't propagate cleanup errors)
+                            terminal::disable_raw_mode().ok();
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)
+                                .ok();
                             return Ok(());
                         }
                         KeyCode::Char('r') => {
