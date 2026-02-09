@@ -15,8 +15,11 @@ use ratatui::Terminal;
 use a2vm_core::machine::AppleII;
 use a2vm_core::video::{self, BITMAP_HEIGHT, BITMAP_SIZE, BITMAP_STRIDE, BITMAP_WIDTH};
 
-/// Cycles per frame at ~1.023 MHz / 60 fps ≈ 17050
-const CYCLES_PER_FRAME: u64 = 17050;
+/// Apple II CPU target clock (NTSC), ~1.023 MHz.
+const CPU_HZ: u64 = 1_023_000;
+
+/// Turbo multiplier when enabled from the TUI.
+const TURBO_MULTIPLIER: u64 = 4;
 
 /// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
 ///
@@ -151,6 +154,9 @@ fn main() -> io::Result<()> {
     let mut bitmap = [0u8; BITMAP_SIZE];
     let frame_duration = Duration::from_micros(16_667); // ~60 fps
     let mut frame_count: u32 = 0;
+    let mut last_emu_tick = Instant::now();
+    let mut cycle_accum: u128 = 0;
+    let mut turbo = false;
 
     // Main loop
     loop {
@@ -173,6 +179,11 @@ fn main() -> io::Result<()> {
                             apple.reset();
                             continue;
                         }
+                        KeyCode::Char('t') => {
+                            // Ctrl+T → turbo toggle
+                            turbo = !turbo;
+                            continue;
+                        }
                         _ => {}
                     }
                 }
@@ -183,8 +194,25 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // Run CPU for one frame
-        apple.run_cycles(CYCLES_PER_FRAME);
+        // Run CPU based on real elapsed wall-clock time.
+        let now = Instant::now();
+        let mut dt = now.saturating_duration_since(last_emu_tick);
+        last_emu_tick = now;
+        if dt > Duration::from_millis(100) {
+            dt = Duration::from_millis(100);
+        }
+
+        cycle_accum += dt.as_nanos() * CPU_HZ as u128;
+        let mut cycles_to_run = (cycle_accum / 1_000_000_000) as u64;
+        cycle_accum %= 1_000_000_000;
+
+        if turbo {
+            cycles_to_run = cycles_to_run.saturating_mul(TURBO_MULTIPLIER);
+        }
+
+        if cycles_to_run != 0 {
+            apple.run_cycles(cycles_to_run);
+        }
 
         // Render display to bitmap (flash toggles every 16 frames ≈ 1.9 Hz)
         let flash_on = (frame_count / 16) % 2 == 0;
@@ -234,8 +262,16 @@ fn main() -> io::Result<()> {
                     "D:--".to_string()
                 };
                 let status = format!(
-                    " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {} | Ctrl+Q:Quit Ctrl+R:Reset",
-                    cpu.pc, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.p.0, mode, disk_status
+                    " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {} {} | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
+                    cpu.pc,
+                    cpu.a,
+                    cpu.x,
+                    cpu.y,
+                    cpu.sp,
+                    cpu.p.0,
+                    mode,
+                    disk_status,
+                    if turbo { "TURBOx4" } else { "TURBOoff" }
                 );
                 let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
                 let status_bar = Paragraph::new(Line::from(Span::styled(

@@ -108,11 +108,10 @@ impl AppleII {
 
     /// Run the CPU for at least `target` cycles. Returns actual cycles executed.
     pub fn run_cycles(&mut self, target: u64) -> u64 {
-        let start = self.cpu.cycles;
-        while self.cpu.cycles - start < target {
-            self.step();
-        }
-        self.cpu.cycles - start
+        let mut cpu = mem::take(&mut self.cpu);
+        let cycles = cpu.run(self, target);
+        self.cpu = cpu;
+        cycles
     }
 
     /// Simulate a key press: sets keyboard latch with strobe bit.
