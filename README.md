@@ -8,7 +8,7 @@ A terminal-based Apple II emulator written in Rust. Features a complete 6502 CPU
 - **Video Modes**: TEXT (40×24), Lo-Res Graphics (40×48), Hi-Res Graphics (280×192), and Mixed mode
 - **Terminal UI**: Renders Apple II display using Braille characters (140×48) with ratatui
 - **Keyboard Input**: Full ASCII keyboard support with Apple II key mapping
-- **ROM Support**: Loads Apple II/II+/IIe ROM files (12K/16K/20K/32K)
+- **ROM Support**: Loads Apple II/II+ ROM files (12K/20K)
 
 ## Quick Start
 

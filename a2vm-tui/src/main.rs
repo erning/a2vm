@@ -123,7 +123,7 @@ fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
         eprintln!("Usage: {} <rom-file> [disk.dsk]", args[0]);
-        eprintln!("  rom-file: path to Apple II ROM (12K, 16K, or 20K)");
+        eprintln!("  rom-file: path to Apple II/II+ ROM (12K or 20K)");
         eprintln!("  disk.dsk: optional DOS 3.3 disk image (143360 bytes)");
         std::process::exit(1);
     }

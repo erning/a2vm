@@ -47,9 +47,7 @@ impl AppleII {
     ///
     /// Supported sizes:
     ///   - 12K (12288): $D000-$FFFF directly (Apple II, Apple II+)
-    ///   - 16K (16384): $C000-$FFFF, uses $D000-$FFFF portion (Apple IIe)
     ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
-    ///   - 32K (32768): Two 16K banks, uses first bank's $D000-$FFFF (Apple IIe)
     pub fn load_rom(&mut self, path: &Path) -> io::Result<()> {
         let data = std::fs::read(path)?;
         match data.len() {
@@ -57,29 +55,17 @@ impl AppleII {
                 // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
                 self.rom.copy_from_slice(&data);
             }
-            0x4000 => {
-                // 16K ROM → skip $C000-$CFFF, use $D000-$FFFF (Apple IIe)
-                self.rom.copy_from_slice(&data[0x1000..]);
-                // Extract Disk II slot 6 ROM at $C600-$C6FF (offset $0600)
-                self.disk.load_slot_rom(&data[0x0600..0x0700]);
-            }
             0x5000 => {
                 // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
                 self.rom.copy_from_slice(&data[0x2000..]);
                 // Extract Disk II slot 6 ROM at $C600-$C6FF (offset $1600)
                 self.disk.load_slot_rom(&data[0x1600..0x1700]);
             }
-            0x8000 => {
-                // 32K ROM → first 16K bank's $D000-$FFFF (Apple IIe)
-                self.rom.copy_from_slice(&data[0x1000..0x4000]);
-                // Extract Disk II slot 6 ROM at $C600-$C6FF from first bank (offset $0600)
-                self.disk.load_slot_rom(&data[0x0600..0x0700]);
-            }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     format!(
-                        "ROM must be 12K, 16K, 20K, or 32K bytes, got {} ({:#X})",
+                        "Unsupported ROM size: {} ({:#X}). Only Apple II / Apple II+ ROMs are supported (12K or 20K).",
                         data.len(),
                         data.len()
                     ),
@@ -323,46 +309,11 @@ mod tests {
     }
 
     #[test]
-    fn test_load_16k_rom_loads_slot6_rom() {
-        let mut rom = vec![0u8; 0x4000];
-        rom[0x0600] = 0xD5;
-        rom[0x06FF] = 0xAA;
-        let path = write_temp_file(&rom, "16k");
-
-        let mut apple = AppleII::new();
-        apple.load_rom(&path).unwrap();
-
-        assert_eq!(apple.read(0xC600), 0xD5);
-        assert_eq!(apple.read(0xC6FF), 0xAA);
-
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn test_load_32k_rom_loads_slot6_rom_from_first_bank() {
-        let mut rom = vec![0u8; 0x8000];
-        rom[0x0600] = 0xD5;
-        rom[0x06FF] = 0xAA;
-        // Put different bytes in second bank to ensure first bank is used.
-        rom[0x4600] = 0x11;
-        rom[0x46FF] = 0x22;
-        let path = write_temp_file(&rom, "32k");
-
-        let mut apple = AppleII::new();
-        apple.load_rom(&path).unwrap();
-
-        assert_eq!(apple.read(0xC600), 0xD5);
-        assert_eq!(apple.read(0xC6FF), 0xAA);
-
-        fs::remove_file(path).unwrap();
-    }
-
-    #[test]
     fn test_disk_controller_disable_hides_slot6() {
-        let mut rom = vec![0u8; 0x4000];
-        rom[0x0600] = 0xD5;
-        rom[0x06FF] = 0xAA;
-        let path = write_temp_file(&rom, "16k-disable");
+        let mut rom = vec![0u8; 0x5000];
+        rom[0x1600] = 0xD5;
+        rom[0x16FF] = 0xAA;
+        let path = write_temp_file(&rom, "20k-disable");
 
         let mut apple = AppleII::new();
         apple.load_rom(&path).unwrap();
