@@ -11,6 +11,8 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
+use rodio::buffer::SamplesBuffer;
+use rodio::{OutputStream, Sink};
 
 use a2vm_core::machine::AppleII;
 use a2vm_core::video::{self, BITMAP_HEIGHT, BITMAP_SIZE, BITMAP_STRIDE, BITMAP_WIDTH};
@@ -32,6 +34,9 @@ const FLASH_HALF_PERIOD_MS: u128 = 267;
 
 /// Perf sample window for measured emulation speed.
 const PERF_SAMPLE_INTERVAL_MS: u64 = 250;
+
+/// PCM output sample rate.
+const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
 /// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
 ///
@@ -156,6 +161,12 @@ fn main() -> io::Result<()> {
 
     apple.reset();
 
+    // Set up audio playback (best-effort).
+    let mut audio: Option<(OutputStream, Sink)> = match OutputStream::try_default() {
+        Ok((stream, handle)) => Sink::try_new(&handle).ok().map(|sink| (stream, sink)),
+        Err(_) => None,
+    };
+
     // Set up terminal
     terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -233,6 +244,13 @@ fn main() -> io::Result<()> {
 
         if cycles_to_run != 0 {
             apple.run_cycles(cycles_to_run);
+
+            if let Some((_, sink)) = &mut audio {
+                let pcm = apple.take_audio_samples(AUDIO_SAMPLE_RATE);
+                if !pcm.is_empty() {
+                    sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, pcm));
+                }
+            }
         }
 
         // Update measured emulation speed.

@@ -1,16 +1,17 @@
 # A2VM Knowledge Base
 
-**Apple II Emulator** — Rust core + Swift frontend architecture.
+**Apple II/II+ Emulator** — Rust core + terminal frontend.
 
 ## Quick Reference
 
 | Task | Location | Notes |
 |------|----------|-------|
 | CPU implementation | `a2vm-core/src/cpu/` | 6502 with 13 addressing modes |
-| Bus trait | `a2vm-core/src/bus.rs` | Hardware abstraction layer |
-| Memory | `a2vm-core/src/memory.rs` | FlatMemory for tests |
-| Architecture docs | `docs/architecture.md` | Full design spec |
-| CPU tests | `a2vm-core/tests/` | Klaus Dormann functional test |
+| Bus + soft switches | `a2vm-core/src/bus.rs`, `a2vm-core/src/machine.rs` | Keyboard, display, speaker, disk I/O |
+| Disk II | `a2vm-core/src/disk.rs` | `.dsk` load, nibblized track reads |
+| Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
+| Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline |
+| TUI runtime | `a2vm-tui/src/main.rs` | Braille display, keyboard, audio playback |
 
 ## Project Structure
 
@@ -19,28 +20,40 @@ a2vm/
 ├── Cargo.toml              # Workspace root
 ├── a2vm-core/              # Rust core library
 │   ├── src/
-│   │   ├── lib.rs          # Exports: bus, cpu, memory
-│   │   ├── bus.rs          # Bus trait (read/write)
-│   │   ├── memory.rs       # FlatMemory impl
+│   │   ├── lib.rs          # Exports: audio, bus, cpu, disk, machine, memory, video
+│   │   ├── audio.rs        # Speaker toggle timestamps -> PCM
+│   │   ├── bus.rs          # Bus trait and utility helpers
+│   │   ├── disk.rs         # Disk II controller
+│   │   ├── machine.rs      # AppleII system integration
+│   │   ├── memory.rs       # FlatMemory impl for tests
+│   │   ├── video.rs        # TEXT/GR/HGR renderer
 │   │   └── cpu/            # 6502 implementation
-│   │       ├── mod.rs      # Cpu struct, step(), execute()
-│   │       ├── opcodes.rs  # 256-entry opcode table
+│   │       ├── mod.rs
+│   │       ├── opcodes.rs
 │   │       ├── addressing.rs
-│   │       └── status.rs   # Status register flags
+│   │       └── status.rs
 │   └── tests/
 │       └── klaus_dormann.rs
+├── a2vm-tui/               # Terminal frontend
+│   └── src/main.rs
 └── docs/
-    ├── architecture.md     # System design
-    └── milestones.md       # Development roadmap
+    ├── architecture.md
+    └── milestones.md
 ```
 
 ## Key Conventions
 
-**CPU-Bus Pattern:** `AppleII` owns both CPU and Bus impl. Use `std::mem::replace` to temporarily extract CPU during execution to avoid borrow conflicts.
+**CPU-Bus Pattern:** `AppleII` owns both CPU and Bus impl. Use `std::mem::take` to temporarily extract CPU during execution.
 
-**Opcode Table:** Static 256-entry array indexed by opcode byte. Each entry: `{mnemonic, mode, cycles, page_penalty}`.
+**ROM Support:** Only Apple II / Apple II+ ROM sizes are accepted: 12K (`0x3000`) and 20K (`0x5000`).
 
-**Status Register:** Bit flags accessed via constants `C, Z, I, D, B, U, V, N`. Use `set_nz()` for N/Z flag updates.
+**Soft Switches:**
+- `$C010`: clears keyboard strobe
+- `$C030`: toggles speaker latch (sound)
+- `$C050-$C057`: display mode control
+- `$C0E0-$C0EF`: Disk II controller
+
+**Audio Path:** `machine.rs` records speaker toggles at `$C030`; `audio.rs` converts cycle-timestamped toggles into PCM via `render_until`; `a2vm-tui` plays samples with `rodio`.
 
 ## 6502 Traps (NMOS)
 
@@ -54,24 +67,19 @@ a2vm/
 ## Commands
 
 ```bash
-# Run tests
+# Run all tests
 cargo test
 
 # Run CPU functional test
 cargo test klaus_dormann
 
-# Build
+# Build release
 cargo build --release
+
+# Run Apple II+ ROM with DOS 3.3 disk
+cargo run -p a2vm-tui -- roms/apple2p.rom "disks/Apple DOS 3.3 January 1983.dsk"
 ```
 
 ## Testing
 
-Uses [Klaus Dormann's 6502 functional test](https://github.com/Klaus2m5/6502_65C02_functional_tests). Binary in `a2vm-core/tests/data/`. Test passes if CPU runs to completion at address $3399.
-
-## FFI (Future)
-
-C ABI for Swift frontend:
-- `a2vm_create()` / `a2vm_destroy()`
-- `a2vm_run_frame()` — 17030 cycles (1 video frame)
-- `a2vm_key_down/up()` — keyboard input
-- `a2vm_get_cpu_state()` — debug inspection
+Uses [Klaus Dormann's 6502 functional test](https://github.com/Klaus2m5/6502_65C02_functional_tests). Binary in `a2vm-core/tests/data/`. Test passes if CPU runs to completion at address `$3399`.

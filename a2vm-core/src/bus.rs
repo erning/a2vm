@@ -5,6 +5,8 @@ pub trait Bus {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);
 
+    fn set_cycle(&mut self, _cycle: u64) {}
+
     fn read_word(&mut self, addr: u16) -> u16 {
         let lo = self.read(addr) as u16;
         let hi = self.read(addr.wrapping_add(1)) as u16;

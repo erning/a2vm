@@ -2,6 +2,7 @@ use std::io;
 use std::mem;
 use std::path::Path;
 
+use crate::audio::Speaker;
 use crate::bus::Bus;
 use crate::cpu::Cpu;
 use crate::disk::DiskII;
@@ -22,6 +23,8 @@ pub struct AppleII {
     pub cpu: Cpu,
     pub display: DisplayMode,
     pub disk: DiskII,
+    speaker: Speaker,
+    bus_cycle: u64,
     disk_controller_enabled: bool,
     ram: [u8; 0xC000], // 48K RAM
     rom: [u8; 0x3000], // 12K ROM ($D000-$FFFF)
@@ -35,6 +38,8 @@ impl AppleII {
             cpu: Cpu::new(),
             display: DisplayMode::default(),
             disk: DiskII::new(),
+            speaker: Speaker::new(),
+            bus_cycle: 0,
             disk_controller_enabled: true,
             ram: [0; 0xC000],
             rom: [0; 0x3000],
@@ -81,6 +86,7 @@ impl AppleII {
         let mut cpu = mem::take(&mut self.cpu);
         cpu.reset(self);
         self.cpu = cpu;
+        self.speaker.reset(self.cpu.cycles);
     }
 
     /// Execute one CPU instruction. Returns cycles consumed.
@@ -123,6 +129,11 @@ impl AppleII {
         &self.ram
     }
 
+    /// Drain synthesized speaker PCM up to current CPU cycle.
+    pub fn take_audio_samples(&mut self, sample_rate: u32) -> Vec<f32> {
+        self.speaker.render_until(self.cpu.cycles, sample_rate)
+    }
+
     /// Peek at any address without side effects (for debug/status display).
     pub fn peek(&self, addr: u16) -> u8 {
         match addr {
@@ -145,6 +156,10 @@ impl Bus for AppleII {
                 val
             }
             // Display mode soft switches (accent on read triggers side effect)
+            0xC030 => {
+                self.speaker.toggle(self.bus_cycle);
+                0
+            }
             0xC050 => {
                 self.display.text = false;
                 0
@@ -206,6 +221,9 @@ impl Bus for AppleII {
                 self.kbd_latch &= 0x7F;
             }
             // Display mode soft switches (write also triggers)
+            0xC030 => {
+                self.speaker.toggle(self.bus_cycle);
+            }
             0xC050 => {
                 self.display.text = false;
             }
@@ -240,6 +258,10 @@ impl Bus for AppleII {
             0xC100..=0xCFFF => {}
             0xD000..=0xFFFF => {}
         }
+    }
+
+    fn set_cycle(&mut self, cycle: u64) {
+        self.bus_cycle = cycle;
     }
 }
 
@@ -306,6 +328,26 @@ mod tests {
         // peek at $C010 should NOT clear strobe
         assert_eq!(apple.peek(0xC010), 0x00);
         assert_eq!(apple.peek(0xC000), 0xC1); // strobe still set
+    }
+
+    #[test]
+    fn test_speaker_toggle_produces_pcm() {
+        let mut apple = AppleII::new();
+
+        // Approx 1kHz toggling at 1.023MHz CPU clock.
+        let half_period = 512u64;
+        for i in 0..200u64 {
+            let cycle = i * half_period;
+            crate::bus::Bus::set_cycle(&mut apple, cycle);
+            crate::bus::Bus::read(&mut apple, 0xC030);
+        }
+
+        apple.cpu.cycles = 200 * half_period;
+
+        let pcm = apple.take_audio_samples(44_100);
+        assert!(!pcm.is_empty());
+        let energy: f32 = pcm.iter().map(|v| v.abs()).sum::<f32>() / pcm.len() as f32;
+        assert!(energy > 0.005);
     }
 
     #[test]

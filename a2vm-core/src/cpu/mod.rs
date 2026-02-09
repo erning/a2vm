@@ -48,6 +48,8 @@ impl Cpu {
 
     /// Execute one instruction, return cycles consumed.
     pub fn step(&mut self, bus: &mut dyn Bus) -> u32 {
+        bus.set_cycle(self.cycles);
+
         // Handle interrupts
         if self.nmi_pending {
             self.nmi_pending = false;
@@ -540,13 +542,34 @@ impl Cpu {
             }
 
             // -- Flags --
-            Mnemonic::CLC => { self.p.set(C, false); 0 }
-            Mnemonic::SEC => { self.p.set(C, true); 0 }
-            Mnemonic::CLD => { self.p.set(D, false); 0 }
-            Mnemonic::SED => { self.p.set(D, true); 0 }
-            Mnemonic::CLI => { self.p.set(I, false); 0 }
-            Mnemonic::SEI => { self.p.set(I, true); 0 }
-            Mnemonic::CLV => { self.p.set(V, false); 0 }
+            Mnemonic::CLC => {
+                self.p.set(C, false);
+                0
+            }
+            Mnemonic::SEC => {
+                self.p.set(C, true);
+                0
+            }
+            Mnemonic::CLD => {
+                self.p.set(D, false);
+                0
+            }
+            Mnemonic::SED => {
+                self.p.set(D, true);
+                0
+            }
+            Mnemonic::CLI => {
+                self.p.set(I, false);
+                0
+            }
+            Mnemonic::SEI => {
+                self.p.set(I, true);
+                0
+            }
+            Mnemonic::CLV => {
+                self.p.set(V, false);
+                0
+            }
 
             // -- No-op / Illegal --
             Mnemonic::NOP => 0,
@@ -632,7 +655,9 @@ impl Cpu {
         let c = self.p.get(C) as i16;
 
         // Binary result for N, Z, V flags (NMOS 6502 behavior)
-        let bin_sum = (a as u16).wrapping_add((!val) as u16).wrapping_add(c as u16);
+        let bin_sum = (a as u16)
+            .wrapping_add((!val) as u16)
+            .wrapping_add(c as u16);
 
         // V flag from binary subtraction
         let overflow = (!(self.a ^ !val) & (self.a ^ bin_sum as u8)) & 0x80 != 0;
@@ -644,7 +669,11 @@ impl Cpu {
             lo += 10;
         }
         // BCD high nibble
-        let borrow_lo = if (a & 0x0F) + c - 1 < (v & 0x0F) { 1 } else { 0 };
+        let borrow_lo = if (a & 0x0F) + c - 1 < (v & 0x0F) {
+            1
+        } else {
+            0
+        };
         let mut hi = (a >> 4) - (v >> 4) - borrow_lo;
 
         if hi < 0 {
