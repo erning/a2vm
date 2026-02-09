@@ -133,14 +133,21 @@ impl AppleII {
     pub fn take_audio_samples(&mut self, sample_rate: u32) -> Vec<f32> {
         self.speaker.render_until(self.cpu.cycles, sample_rate)
     }
+}
 
-    /// Peek at any address without side effects (for debug/status display).
-    pub fn peek(&self, addr: u16) -> u8 {
+impl AppleII {
+    /// Handle display mode soft switches $C050-$C057 (shared by read and write).
+    fn handle_display_switch(&mut self, addr: u16) {
         match addr {
-            0x0000..=0xBFFF => self.ram[addr as usize],
-            0xC000..=0xC00F => self.kbd_latch,
-            0xC010..=0xCFFF => 0,
-            0xD000..=0xFFFF => self.rom[(addr - 0xD000) as usize],
+            0xC050 => self.display.text = false,
+            0xC051 => self.display.text = true,
+            0xC052 => self.display.mixed = false,
+            0xC053 => self.display.mixed = true,
+            0xC054 => self.display.page2 = false,
+            0xC055 => self.display.page2 = true,
+            0xC056 => self.display.hires = false,
+            0xC057 => self.display.hires = true,
+            _ => {}
         }
     }
 }
@@ -155,41 +162,13 @@ impl Bus for AppleII {
                 self.kbd_latch &= 0x7F;
                 val
             }
-            // Display mode soft switches (accent on read triggers side effect)
             0xC030 => {
                 self.speaker.toggle(self.bus_cycle);
                 0
             }
-            0xC050 => {
-                self.display.text = false;
-                0
-            }
-            0xC051 => {
-                self.display.text = true;
-                0
-            }
-            0xC052 => {
-                self.display.mixed = false;
-                0
-            }
-            0xC053 => {
-                self.display.mixed = true;
-                0
-            }
-            0xC054 => {
-                self.display.page2 = false;
-                0
-            }
-            0xC055 => {
-                self.display.page2 = true;
-                0
-            }
-            0xC056 => {
-                self.display.hires = false;
-                0
-            }
-            0xC057 => {
-                self.display.hires = true;
+            // Display mode soft switches (read triggers side effect)
+            0xC050..=0xC057 => {
+                self.handle_display_switch(addr);
                 0
             }
             // Disk II I/O (slot 6)
@@ -220,33 +199,12 @@ impl Bus for AppleII {
             0xC010 => {
                 self.kbd_latch &= 0x7F;
             }
-            // Display mode soft switches (write also triggers)
             0xC030 => {
                 self.speaker.toggle(self.bus_cycle);
             }
-            0xC050 => {
-                self.display.text = false;
-            }
-            0xC051 => {
-                self.display.text = true;
-            }
-            0xC052 => {
-                self.display.mixed = false;
-            }
-            0xC053 => {
-                self.display.mixed = true;
-            }
-            0xC054 => {
-                self.display.page2 = false;
-            }
-            0xC055 => {
-                self.display.page2 = true;
-            }
-            0xC056 => {
-                self.display.hires = false;
-            }
-            0xC057 => {
-                self.display.hires = true;
+            // Display mode soft switches (write also triggers)
+            0xC050..=0xC057 => {
+                self.handle_display_switch(addr);
             }
             // Disk II I/O (slot 6)
             0xC0E0..=0xC0EF => {
@@ -257,6 +215,15 @@ impl Bus for AppleII {
             0xC000..=0xC0FF => {}
             0xC100..=0xCFFF => {}
             0xD000..=0xFFFF => {}
+        }
+    }
+
+    fn peek(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0xBFFF => self.ram[addr as usize],
+            0xC000..=0xC00F => self.kbd_latch,
+            0xC010..=0xCFFF => 0,
+            0xD000..=0xFFFF => self.rom[(addr - 0xD000) as usize],
         }
     }
 

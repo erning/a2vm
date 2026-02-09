@@ -27,4 +27,8 @@ impl Bus for FlatMemory {
     fn write(&mut self, addr: u16, val: u8) {
         self.data[addr as usize] = val;
     }
+
+    fn peek(&self, addr: u16) -> u8 {
+        self.data[addr as usize]
+    }
 }

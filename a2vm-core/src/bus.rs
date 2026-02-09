@@ -5,6 +5,13 @@ pub trait Bus {
     fn read(&mut self, addr: u16) -> u8;
     fn write(&mut self, addr: u16, val: u8);
 
+    /// Read without side effects (for debuggers/status display).
+    /// Default returns 0; implementors should override for meaningful peek.
+    fn peek(&self, addr: u16) -> u8 {
+        let _ = addr;
+        0
+    }
+
     fn set_cycle(&mut self, _cycle: u64) {}
 
     fn read_word(&mut self, addr: u16) -> u16 {
