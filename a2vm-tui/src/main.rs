@@ -116,11 +116,12 @@ fn map_key(key: KeyEvent) -> Option<u8> {
 }
 
 fn main() -> io::Result<()> {
-    // Parse command line: expect ROM path
+    // Parse command line: ROM path + optional disk image
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <rom-file>", args[0]);
-        eprintln!("  rom-file: path to Apple II ROM (12K or 16K)");
+        eprintln!("Usage: {} <rom-file> [disk.dsk]", args[0]);
+        eprintln!("  rom-file: path to Apple II ROM (12K, 16K, or 20K)");
+        eprintln!("  disk.dsk: optional DOS 3.3 disk image (143360 bytes)");
         std::process::exit(1);
     }
     let rom_path = Path::new(&args[1]);
@@ -128,6 +129,13 @@ fn main() -> io::Result<()> {
     // Create Apple II and load ROM
     let mut apple = AppleII::new();
     apple.load_rom(rom_path)?;
+
+    // Load disk image if provided
+    if args.len() >= 3 {
+        let disk_path = Path::new(&args[2]);
+        apple.load_disk(disk_path)?;
+    }
+
     apple.reset();
 
     // Set up terminal
@@ -221,9 +229,14 @@ fn main() -> io::Result<()> {
                 } else {
                     "GR"
                 };
+                let disk_status = if apple.disk.motor_on {
+                    format!("D:T{}", apple.disk.half_track / 2)
+                } else {
+                    "D:--".to_string()
+                };
                 let status = format!(
-                    " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} | Ctrl+Q:Quit Ctrl+R:Reset",
-                    cpu.pc, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.p.0, mode
+                    " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {} | Ctrl+Q:Quit Ctrl+R:Reset",
+                    cpu.pc, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.p.0, mode, disk_status
                 );
                 let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
                 let status_bar = Paragraph::new(Line::from(Span::styled(

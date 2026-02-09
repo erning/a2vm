@@ -1,6 +1,7 @@
 # User specified
 .claude/
 roms/
+disks/
 
 # Rust
 /target/

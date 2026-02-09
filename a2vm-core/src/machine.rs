@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::bus::Bus;
 use crate::cpu::Cpu;
+use crate::disk::DiskII;
 use crate::video::DisplayMode;
 
 /// Apple II emulator: CPU + memory + keyboard I/O.
@@ -20,6 +21,7 @@ use crate::video::DisplayMode;
 pub struct AppleII {
     pub cpu: Cpu,
     pub display: DisplayMode,
+    pub disk: DiskII,
     ram: [u8; 0xC000],        // 48K RAM
     rom: [u8; 0x3000],        // 12K ROM ($D000-$FFFF)
     rom_loaded: bool,
@@ -31,6 +33,7 @@ impl AppleII {
         Self {
             cpu: Cpu::new(),
             display: DisplayMode::default(),
+            disk: DiskII::new(),
             ram: [0; 0xC000],
             rom: [0; 0x3000],
             rom_loaded: false,
@@ -59,6 +62,8 @@ impl AppleII {
             0x5000 => {
                 // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
                 self.rom.copy_from_slice(&data[0x2000..]);
+                // Extract Disk II slot 6 ROM at $C600-$C6FF (offset $1600)
+                self.disk.load_slot_rom(&data[0x1600..0x1700]);
             }
             0x8000 => {
                 // 32K ROM → first 16K bank's $D000-$FFFF (Apple IIe)
@@ -109,6 +114,11 @@ impl AppleII {
         self.kbd_latch = ascii | 0x80;
     }
 
+    /// Load a .dsk disk image into drive 1.
+    pub fn load_disk(&mut self, path: &Path) -> io::Result<()> {
+        self.disk.load_disk(path, 0)
+    }
+
     /// Read-only access to RAM (for video rendering).
     pub fn ram(&self) -> &[u8] {
         &self.ram
@@ -144,7 +154,11 @@ impl Bus for AppleII {
             0xC055 => { self.display.page2 = true; 0 }
             0xC056 => { self.display.hires = false; 0 }
             0xC057 => { self.display.hires = true; 0 }
+            // Disk II I/O (slot 6)
+            0xC0E0..=0xC0EF => self.disk.io_read(addr),
             0xC011..=0xC0FF => 0x00,
+            // Disk II slot ROM ($C600-$C6FF)
+            0xC600..=0xC6FF => self.disk.read_slot_rom(addr),
             0xC100..=0xCFFF => 0x00,
             0xD000..=0xFFFF => self.rom[(addr - 0xD000) as usize],
         }
@@ -163,6 +177,8 @@ impl Bus for AppleII {
             0xC055 => { self.display.page2 = true; }
             0xC056 => { self.display.hires = false; }
             0xC057 => { self.display.hires = true; }
+            // Disk II I/O (slot 6)
+            0xC0E0..=0xC0EF => { self.disk.io_write(addr, val); }
             0xC000..=0xC0FF => {}
             0xC100..=0xCFFF => {}
             0xD000..=0xFFFF => {}
