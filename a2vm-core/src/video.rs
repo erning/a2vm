@@ -1,10 +1,10 @@
-/// Apple II video rendering → 280×192 monochrome bitmap.
-///
-/// The bitmap is 280 pixels wide × 192 pixels tall, stored as 6720 bytes
-/// (each row = 35 bytes = 280 bits, MSB first within each byte).
-///
-/// Unified pipeline: all display modes (TEXT, GR, HGR) render to the same
-/// 280×192 bitmap, which is then encoded to Braille characters by the TUI.
+//! Apple II video rendering → 280×192 monochrome bitmap.
+//!
+//! The bitmap is 280 pixels wide × 192 pixels tall, stored as 6720 bytes
+//! (each row = 35 bytes = 280 bits, MSB first within each byte).
+//!
+//! Unified pipeline: all display modes (TEXT, GR, HGR) render to the same
+//! 280×192 bitmap, which is then encoded to Braille characters by the TUI.
 
 /// Display mode state, controlled by soft switches $C050-$C057.
 #[derive(Clone, Debug)]
@@ -120,8 +120,13 @@ fn render_text_rows(
     start_row: usize,
     end_row: usize,
 ) {
-    for row in start_row..end_row {
-        let base = TEXT_LINE_ADDR[row] as usize + page_offset;
+    for (row, &line_addr) in TEXT_LINE_ADDR
+        .iter()
+        .enumerate()
+        .take(end_row)
+        .skip(start_row)
+    {
+        let base = line_addr as usize + page_offset;
         for col in 0..40usize {
             let screen_code = ram[base + col];
 
@@ -170,8 +175,8 @@ fn render_lores_rows(
     page_offset: usize,
     num_text_rows: usize,
 ) {
-    for text_row in 0..num_text_rows {
-        let base = TEXT_LINE_ADDR[text_row] as usize + page_offset;
+    for (text_row, &line_addr) in TEXT_LINE_ADDR.iter().enumerate().take(num_text_rows) {
+        let base = line_addr as usize + page_offset;
         for col in 0..40usize {
             let byte = ram[base + col];
             let top_color = byte & 0x0F;

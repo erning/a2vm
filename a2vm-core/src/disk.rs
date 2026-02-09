@@ -231,10 +231,9 @@ fn encode_4and4(buf: &mut Vec<u8>, val: u8) {
 
 /// Nibblize an entire .dsk image (35 tracks × 16 sectors) into nibble tracks.
 fn nibblize_disk(raw: &[u8], out: &mut [[u8; NIBBLE_TRACK_SIZE]; 35]) {
-    for track in 0..35 {
+    for (track, out_track) in out.iter_mut().enumerate() {
         let mut buf = Vec::with_capacity(NIBBLE_TRACK_SIZE);
-        for phys_sector in 0..16 {
-            let logical_sector = DOS33_SECTOR_ORDER[phys_sector];
+        for (phys_sector, &logical_sector) in DOS33_SECTOR_ORDER.iter().enumerate() {
             let offset = (track * 16 + logical_sector) * 256;
             let sector_data = &raw[offset..offset + 256];
 
@@ -244,7 +243,7 @@ fn nibblize_disk(raw: &[u8], out: &mut [[u8; NIBBLE_TRACK_SIZE]; 35]) {
         while buf.len() < NIBBLE_TRACK_SIZE {
             buf.push(0xFF);
         }
-        out[track][..NIBBLE_TRACK_SIZE].copy_from_slice(&buf[..NIBBLE_TRACK_SIZE]);
+        out_track[..NIBBLE_TRACK_SIZE].copy_from_slice(&buf[..NIBBLE_TRACK_SIZE]);
     }
 }
 
