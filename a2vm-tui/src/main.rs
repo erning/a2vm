@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{execute, cursor};
+use crossterm::{cursor, execute};
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -29,7 +29,7 @@ const CYCLES_PER_FRAME: u64 = 17050;
 ///
 /// Result: 140 columns × 48 rows.
 fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
-    let cols = BITMAP_WIDTH / 2;  // 140
+    let cols = BITMAP_WIDTH / 2; // 140
     let rows = BITMAP_HEIGHT / 4; // 48
     let mut lines = Vec::with_capacity(rows);
 
@@ -130,6 +130,9 @@ fn main() -> io::Result<()> {
     let mut apple = AppleII::new();
     apple.load_rom(rom_path)?;
 
+    // Expose Disk II controller only when a disk image is provided.
+    apple.set_disk_controller_enabled(args.len() >= 3);
+
     // Load disk image if provided
     if args.len() >= 3 {
         let disk_path = Path::new(&args[2]);
@@ -162,11 +165,7 @@ fn main() -> io::Result<()> {
                         KeyCode::Char('q') | KeyCode::Char('c') => {
                             // Restore terminal
                             terminal::disable_raw_mode()?;
-                            execute!(
-                                terminal.backend_mut(),
-                                LeaveAlternateScreen,
-                                cursor::Show
-                            )?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
                             return Ok(());
                         }
                         KeyCode::Char('r') => {
@@ -198,7 +197,7 @@ fn main() -> io::Result<()> {
         // Draw TUI
         // Fixed display size: 140×48 content + 2 for border = 142×50, plus 1 status bar
         const DISPLAY_W: u16 = 142; // 140 braille cols + 2 border
-        const DISPLAY_H: u16 = 50;  // 48 braille rows + 2 border
+        const DISPLAY_H: u16 = 50; // 48 braille rows + 2 border
 
         terminal.draw(|frame| {
             let area = frame.area();
