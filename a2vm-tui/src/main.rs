@@ -21,6 +21,18 @@ const CPU_HZ: u64 = 1_023_000;
 /// Turbo multiplier when enabled from the TUI.
 const TURBO_MULTIPLIER: u64 = 4;
 
+/// Normal draw cadence (~60 FPS).
+const NORMAL_RENDER_INTERVAL_US: u64 = 16_667;
+
+/// Turbo draw cadence (reduced redraw pressure).
+const TURBO_RENDER_INTERVAL_MS: u64 = 50;
+
+/// Flash half-period used by Apple II text blinking.
+const FLASH_HALF_PERIOD_MS: u128 = 267;
+
+/// Perf sample window for measured emulation speed.
+const PERF_SAMPLE_INTERVAL_MS: u64 = 250;
+
 /// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
 ///
 /// Each Braille character (U+2800..U+28FF) encodes a 2×4 dot matrix:
@@ -152,11 +164,20 @@ fn main() -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut bitmap = [0u8; BITMAP_SIZE];
-    let frame_duration = Duration::from_micros(16_667); // ~60 fps
-    let mut frame_count: u32 = 0;
+    let mut last_bitmap = [0u8; BITMAP_SIZE];
+    let mut braille_lines = vec!["".to_string(); BITMAP_HEIGHT / 4];
+    let mut braille_initialized = false;
+    let frame_duration = Duration::from_micros(NORMAL_RENDER_INTERVAL_US);
+    let turbo_render_interval = Duration::from_millis(TURBO_RENDER_INTERVAL_MS);
+    let perf_sample_interval = Duration::from_millis(PERF_SAMPLE_INTERVAL_MS);
+    let boot_time = Instant::now();
+    let mut last_render_time = Instant::now() - frame_duration;
     let mut last_emu_tick = Instant::now();
     let mut cycle_accum: u128 = 0;
     let mut turbo = false;
+    let mut emu_mhz: f64 = 0.0;
+    let mut perf_last_time = Instant::now();
+    let mut perf_last_cycles = apple.cpu.cycles;
 
     // Main loop
     loop {
@@ -214,73 +235,105 @@ fn main() -> io::Result<()> {
             apple.run_cycles(cycles_to_run);
         }
 
-        // Render display to bitmap (flash toggles every 16 frames ≈ 1.9 Hz)
-        let flash_on = (frame_count / 16) % 2 == 0;
-        video::render(apple.ram(), &apple.display, flash_on, &mut bitmap);
-        frame_count = frame_count.wrapping_add(1);
-
-        // Convert bitmap to braille
-        let braille_lines = bitmap_to_braille(&bitmap);
-
-        // Draw TUI
-        // Fixed display size: 140×48 content + 2 for border = 142×50, plus 1 status bar
-        const DISPLAY_W: u16 = 142; // 140 braille cols + 2 border
-        const DISPLAY_H: u16 = 50; // 48 braille rows + 2 border
-
-        terminal.draw(|frame| {
-            let area = frame.area();
-
-            // Center the fixed-size display within the terminal
-            let x = area.x + area.width.saturating_sub(DISPLAY_W) / 2;
-            let y = area.y;
-            let display_rect = Rect::new(x, y, DISPLAY_W.min(area.width), DISPLAY_H.min(area.height));
-
-            // Braille display in a bordered block
-            let display_lines: Vec<Line> = braille_lines
-                .iter()
-                .map(|s| Line::from(Span::styled(s.as_str(), Style::default().fg(Color::Green))))
-                .collect();
-
-            let display = Paragraph::new(display_lines)
-                .block(Block::default().borders(Borders::ALL).title(" A2VM "));
-            frame.render_widget(display, display_rect);
-
-            // Status bar below the display
-            let status_y = display_rect.y + display_rect.height;
-            if status_y < area.y + area.height {
-                let cpu = &apple.cpu;
-                let mode = if apple.display.text {
-                    "TEXT"
-                } else if apple.display.hires {
-                    "HGR"
-                } else {
-                    "GR"
-                };
-                let disk_status = if apple.disk.motor_on {
-                    format!("D:T{}", apple.disk.half_track / 2)
-                } else {
-                    "D:--".to_string()
-                };
-                let status = format!(
-                    " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {} {} | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
-                    cpu.pc,
-                    cpu.a,
-                    cpu.x,
-                    cpu.y,
-                    cpu.sp,
-                    cpu.p.0,
-                    mode,
-                    disk_status,
-                    if turbo { "TURBOx4" } else { "TURBOoff" }
-                );
-                let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
-                let status_bar = Paragraph::new(Line::from(Span::styled(
-                    status,
-                    Style::default().fg(Color::Cyan),
-                )));
-                frame.render_widget(status_bar, status_rect);
+        // Update measured emulation speed.
+        let perf_now = Instant::now();
+        let perf_elapsed = perf_now.saturating_duration_since(perf_last_time);
+        if perf_elapsed >= perf_sample_interval {
+            let delta_cycles = apple.cpu.cycles.saturating_sub(perf_last_cycles);
+            let secs = perf_elapsed.as_secs_f64();
+            if secs > 0.0 {
+                emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
             }
-        })?;
+            perf_last_cycles = apple.cpu.cycles;
+            perf_last_time = perf_now;
+        }
+
+        // Render and redraw only when due.
+        let render_interval = if turbo {
+            turbo_render_interval
+        } else {
+            frame_duration
+        };
+        if Instant::now().saturating_duration_since(last_render_time) >= render_interval {
+            let flash_on = ((boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
+            video::render(apple.ram(), &apple.display, flash_on, &mut bitmap);
+
+            if !braille_initialized || bitmap != last_bitmap {
+                braille_lines = bitmap_to_braille(&bitmap);
+                last_bitmap.copy_from_slice(&bitmap);
+                braille_initialized = true;
+            }
+
+            // Draw TUI each render tick so the status bar updates immediately.
+            // Fixed display size: 140×48 content + 2 for border = 142×50, plus 1 status bar
+            const DISPLAY_W: u16 = 142; // 140 braille cols + 2 border
+            const DISPLAY_H: u16 = 50; // 48 braille rows + 2 border
+
+            terminal.draw(|frame| {
+                let area = frame.area();
+
+                // Center the fixed-size display within the terminal
+                let x = area.x + area.width.saturating_sub(DISPLAY_W) / 2;
+                let y = area.y;
+                let display_rect =
+                    Rect::new(x, y, DISPLAY_W.min(area.width), DISPLAY_H.min(area.height));
+
+                // Braille display in a bordered block
+                let display_lines: Vec<Line> = braille_lines
+                    .iter()
+                    .map(|s| Line::from(Span::styled(s.as_str(), Style::default().fg(Color::Green))))
+                    .collect();
+
+                let display =
+                    Paragraph::new(display_lines).block(Block::default().borders(Borders::ALL).title(" A2VM "));
+                frame.render_widget(display, display_rect);
+
+                // Status bar below the display
+                let status_y = display_rect.y + display_rect.height;
+                if status_y < area.y + area.height {
+                    let cpu = &apple.cpu;
+                    let mode = if apple.display.text {
+                        "TEXT"
+                    } else if apple.display.hires {
+                        "HGR"
+                    } else {
+                        "GR"
+                    };
+                    let disk_status = if apple.disk.motor_on {
+                        format!("D:T{}", apple.disk.half_track / 2)
+                    } else {
+                        "D:--".to_string()
+                    };
+                    let target_mhz = if turbo {
+                        (CPU_HZ * TURBO_MULTIPLIER) as f64 / 1_000_000.0
+                    } else {
+                        CPU_HZ as f64 / 1_000_000.0
+                    };
+                    let status = format!(
+                        " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {} {} EMU:{:.2}/{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
+                        cpu.pc,
+                        cpu.a,
+                        cpu.x,
+                        cpu.y,
+                        cpu.sp,
+                        cpu.p.0,
+                        mode,
+                        disk_status,
+                        if turbo { "TURBOx4" } else { "TURBOoff" },
+                        emu_mhz,
+                        target_mhz
+                    );
+                    let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
+                    let status_bar = Paragraph::new(Line::from(Span::styled(
+                        status,
+                        Style::default().fg(Color::Cyan),
+                    )));
+                    frame.render_widget(status_bar, status_rect);
+                }
+            })?;
+
+            last_render_time = Instant::now();
+        }
 
         // Frame rate limiting
         let elapsed = frame_start.elapsed();
