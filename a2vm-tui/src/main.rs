@@ -136,27 +136,82 @@ fn map_key(key: KeyEvent) -> Option<u8> {
 }
 
 fn main() -> io::Result<()> {
-    // Parse command line: ROM path + optional disk image
+    // Parse command line options
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <rom-file> [disk.dsk]", args[0]);
-        eprintln!("  rom-file: path to Apple II/II+ ROM (12K or 20K)");
-        eprintln!("  disk.dsk: optional DOS 3.3 disk image (143360 bytes)");
-        std::process::exit(1);
+    let mut rom_path_str: Option<String> = None;
+    let mut disk_path_str: Option<String> = None;
+    let mut fast_disk_str: Option<String> = None;
+    let mut show_help = false;
+    let mut error = false;
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--help" | "-h" => show_help = true,
+            "--rom" => {
+                i += 1;
+                rom_path_str = args.get(i).cloned();
+            }
+            "--disk" => {
+                i += 1;
+                disk_path_str = args.get(i).cloned();
+            }
+            "--fast-disk" => {
+                i += 1;
+                fast_disk_str = args.get(i).cloned();
+            }
+            other => {
+                eprintln!("Error: unknown option: {other}");
+                error = true;
+            }
+        }
+        i += 1;
     }
-    let rom_path = Path::new(&args[1]);
+
+    // --disk and --fast-disk are mutually exclusive
+    if disk_path_str.is_some() && fast_disk_str.is_some() {
+        eprintln!("Error: --disk and --fast-disk are mutually exclusive");
+        error = true;
+    }
+
+    if show_help || error {
+        eprintln!("Usage: {} --rom <file> [--disk <file> | --fast-disk <file>]", args[0]);
+        eprintln!();
+        eprintln!("Options:");
+        eprintln!("  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]");
+        eprintln!("  --disk <file>       .dsk disk image (143360 bytes)");
+        eprintln!("  --fast-disk <file>  .dsk disk image with DOS 3.3 RWTS trap ($B7B5)");
+        eprintln!("                      for instant sector reads; only for DOS 3.3 disks");
+        eprintln!("  -h, --help          Show this help");
+        std::process::exit(if error { 2 } else { 0 });
+    }
+
+    // Resolve ROM path: --rom > $A2VM_ROM
+    let rom_path_str = rom_path_str
+        .or_else(|| std::env::var("A2VM_ROM").ok())
+        .unwrap_or_else(|| {
+            eprintln!("Error: ROM not specified; use --rom <file> or set A2VM_ROM");
+            std::process::exit(2);
+        });
+    let rom_path = Path::new(&rom_path_str);
+
+    // Resolve disk: --disk or --fast-disk
+    let fast_disk = fast_disk_str.is_some();
+    let disk_file = disk_path_str.or(fast_disk_str);
 
     // Create Apple II and load ROM
     let mut apple = AppleII::new();
     apple.load_rom(rom_path)?;
 
     // Expose Disk II controller only when a disk image is provided.
-    apple.set_disk_controller_enabled(args.len() >= 3);
+    apple.set_disk_controller_enabled(disk_file.is_some());
 
-    // Load disk image if provided
-    if args.len() >= 3 {
-        let disk_path = Path::new(&args[2]);
-        apple.load_disk(disk_path)?;
+    if let Some(ref disk) = disk_file {
+        apple.load_disk(Path::new(disk))?;
+    }
+
+    if fast_disk {
+        apple.set_fast_disk(true);
     }
 
     apple.reset();
@@ -323,13 +378,14 @@ fn main() -> io::Result<()> {
                     } else {
                         "D:--".to_string()
                     };
+                    let fast_label = if apple.is_fast_disk() { " FAST" } else { "" };
                     let target_mhz = if turbo {
                         (CPU_HZ * TURBO_MULTIPLIER) as f64 / 1_000_000.0
                     } else {
                         CPU_HZ as f64 / 1_000_000.0
                     };
                     let status = format!(
-                        " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {} {} EMU:{:.2}/{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
+                        " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{} {} EMU:{:.2}/{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
                         cpu.pc,
                         cpu.a,
                         cpu.x,
@@ -338,6 +394,7 @@ fn main() -> io::Result<()> {
                         cpu.p.0,
                         mode,
                         disk_status,
+                        fast_label,
                         if turbo { "TURBOx4" } else { "TURBOoff" },
                         emu_mhz,
                         target_mhz

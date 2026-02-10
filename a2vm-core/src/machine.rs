@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::audio::Speaker;
 use crate::bus::Bus;
+use crate::cpu::status::C;
 use crate::cpu::Cpu;
 use crate::disk::DiskII;
 use crate::video::DisplayMode;
@@ -26,6 +27,7 @@ pub struct AppleII {
     speaker: Speaker,
     bus_cycle: u64,
     disk_controller_enabled: bool,
+    fast_disk: bool,
     ram: [u8; 0xC000], // 48K RAM
     rom: [u8; 0x3000], // 12K ROM ($D000-$FFFF)
     rom_loaded: bool,
@@ -41,6 +43,7 @@ impl AppleII {
             speaker: Speaker::new(),
             bus_cycle: 0,
             disk_controller_enabled: true,
+            fast_disk: false,
             ram: [0; 0xC000],
             rom: [0; 0x3000],
             rom_loaded: false,
@@ -91,6 +94,12 @@ impl AppleII {
 
     /// Execute one CPU instruction. Returns cycles consumed.
     pub fn step(&mut self) -> u32 {
+        // Check for RWTS trap before executing the instruction
+        if self.fast_disk && self.cpu.pc == 0xB7B5 {
+            if let Some(cycles) = self.try_rwts_trap() {
+                return cycles;
+            }
+        }
         let mut cpu = mem::take(&mut self.cpu);
         let cycles = cpu.step(self);
         self.cpu = cpu;
@@ -100,10 +109,38 @@ impl AppleII {
 
     /// Run the CPU for at least `target` cycles. Returns actual cycles executed.
     pub fn run_cycles(&mut self, target: u64) -> u64 {
-        let mut cpu = mem::take(&mut self.cpu);
-        let cycles = cpu.run(self, target);
-        self.cpu = cpu;
-        cycles
+        if self.fast_disk {
+            // Auto-turbo while disk motor is spinning for fast boot
+            let effective = if self.disk.motor_on {
+                target.saturating_mul(8)
+            } else {
+                target
+            };
+            // Use run_until so the CPU runs at full speed in a tight loop,
+            // breaking only when PC hits the RWTS entry point.
+            let start = self.cpu.cycles;
+            while self.cpu.cycles - start < effective {
+                let remaining = effective - (self.cpu.cycles - start);
+                let mut cpu = mem::take(&mut self.cpu);
+                cpu.run_until(self, remaining, 0xB7B5);
+                self.cpu = cpu;
+
+                if self.cpu.pc == 0xB7B5 {
+                    if self.try_rwts_trap().is_none() {
+                        // Not trappable (e.g. write), step past normally
+                        let mut cpu = mem::take(&mut self.cpu);
+                        cpu.step(self);
+                        self.cpu = cpu;
+                    }
+                }
+            }
+            self.cpu.cycles - start
+        } else {
+            let mut cpu = mem::take(&mut self.cpu);
+            let cycles = cpu.run(self, target);
+            self.cpu = cpu;
+            cycles
+        }
     }
 
     /// Simulate a key press: sets keyboard latch with strobe bit.
@@ -124,6 +161,16 @@ impl AppleII {
         self.disk_controller_enabled = enabled;
     }
 
+    /// Enable or disable fast-disk mode (RWTS trap).
+    pub fn set_fast_disk(&mut self, enabled: bool) {
+        self.fast_disk = enabled;
+    }
+
+    /// Returns whether fast-disk mode is active.
+    pub fn is_fast_disk(&self) -> bool {
+        self.fast_disk
+    }
+
     /// Read-only access to RAM (for video rendering).
     pub fn ram(&self) -> &[u8] {
         &self.ram
@@ -136,6 +183,64 @@ impl AppleII {
 }
 
 impl AppleII {
+    /// Try to intercept RWTS at $B7B5.
+    /// Returns `Some(cycles)` if the trap handled the call, `None` to fall through.
+    fn try_rwts_trap(&mut self) -> Option<u32> {
+        // IOB pointer from A (lo) and Y (hi)
+        let iob_addr = self.cpu.a as u16 | ((self.cpu.y as u16) << 8);
+
+        // Read IOB fields via peek (no side effects)
+        let command = self.peek(iob_addr.wrapping_add(0x0C));
+        let track = self.peek(iob_addr.wrapping_add(0x04));
+        let sector = self.peek(iob_addr.wrapping_add(0x05));
+        let buf_lo = self.peek(iob_addr.wrapping_add(0x08));
+        let buf_hi = self.peek(iob_addr.wrapping_add(0x09));
+        let buf_addr = buf_lo as u16 | ((buf_hi as u16) << 8);
+        let drive_num = self.peek(iob_addr.wrapping_add(0x02));
+        let drive_idx = if drive_num <= 1 { 0 } else { 1 };
+
+        match command {
+            0x01 => {
+                // Seek: update half_track, return success
+                self.disk.half_track = track * 2;
+                // Clear error code in IOB
+                self.write(iob_addr.wrapping_add(0x0D), 0);
+                // Clear carry (success) and simulate RTS
+                self.cpu.p.set(C, false);
+                self.simulate_rts();
+                Some(50)
+            }
+            0x02 => {
+                // Read: copy sector data from raw image to RAM buffer
+                if let Some(data) = self.disk.read_sector_raw(drive_idx, track, sector) {
+                    for (i, &byte) in data.iter().enumerate() {
+                        self.write(buf_addr.wrapping_add(i as u16), byte);
+                    }
+                    // Update half_track to match
+                    self.disk.half_track = track * 2;
+                    // Clear error code in IOB
+                    self.write(iob_addr.wrapping_add(0x0D), 0);
+                    // Clear carry (success) and simulate RTS
+                    self.cpu.p.set(C, false);
+                    self.simulate_rts();
+                    Some(100)
+                } else {
+                    None // fall through to normal emulation
+                }
+            }
+            _ => None, // write or unknown: fall through
+        }
+    }
+
+    /// Simulate an RTS by pulling the return address from the stack.
+    fn simulate_rts(&mut self) {
+        let sp = self.cpu.sp;
+        let lo = self.peek(0x0100 | sp.wrapping_add(1) as u16);
+        let hi = self.peek(0x0100 | sp.wrapping_add(2) as u16);
+        self.cpu.sp = sp.wrapping_add(2);
+        self.cpu.pc = (u16::from(hi) << 8 | u16::from(lo)).wrapping_add(1);
+    }
+
     /// Handle display mode soft switches $C050-$C057 (shared by read and write).
     fn handle_display_switch(&mut self, addr: u16) {
         match addr {

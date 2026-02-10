@@ -29,6 +29,7 @@ const WRITE_TABLE: [u8; 64] = [
 /// A single floppy drive.
 struct Drive {
     nibble_data: Box<[[u8; NIBBLE_TRACK_SIZE]; 35]>,
+    raw_data: Option<Box<[u8; DSK_SIZE]>>,
     byte_position: usize,
     has_disk: bool,
     write_protected: bool,
@@ -38,6 +39,7 @@ impl Drive {
     fn new() -> Self {
         Self {
             nibble_data: Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]),
+            raw_data: None,
             byte_position: 0,
             has_disk: false,
             write_protected: true,
@@ -106,6 +108,9 @@ impl DiskII {
         }
         let drv = &mut self.drives[drive];
         nibblize_disk(&data, &mut drv.nibble_data);
+        let mut raw = Box::new([0u8; DSK_SIZE]);
+        raw.copy_from_slice(&data);
+        drv.raw_data = Some(raw);
         drv.has_disk = true;
         drv.write_protected = true;
         drv.byte_position = 0;
@@ -192,6 +197,19 @@ impl DiskII {
         let delta = PHASE_DELTA[current_phase][phase] as i16;
         let next = (self.half_track as i16 + delta).clamp(0, 69);
         self.half_track = next as u8;
+    }
+
+    /// Read a raw 256-byte sector from the loaded .dsk image.
+    /// Returns `None` if no raw data is available or track/sector is out of range.
+    pub fn read_sector_raw(&self, drive: usize, track: u8, sector: u8) -> Option<[u8; 256]> {
+        if drive >= 2 || track >= 35 || sector >= 16 {
+            return None;
+        }
+        let raw = self.drives[drive].raw_data.as_ref()?;
+        let offset = (track as usize * 16 + sector as usize) * 256;
+        let mut buf = [0u8; 256];
+        buf.copy_from_slice(&raw[offset..offset + 256]);
+        Some(buf)
     }
 
     /// Tick hook for future cycle-accurate disk timing.

@@ -83,6 +83,20 @@ impl Cpu {
         self.cycles - start
     }
 
+    /// Run until cycle budget is exhausted OR `pc` equals `trap_pc`.
+    /// Returns total cycles executed. Caller should check `self.pc == trap_pc`
+    /// to distinguish trap hit vs budget exhausted.
+    pub fn run_until(&mut self, bus: &mut dyn Bus, target_cycles: u64, trap_pc: u16) -> u64 {
+        let start = self.cycles;
+        while self.cycles - start < target_cycles {
+            if self.pc == trap_pc {
+                break;
+            }
+            self.step(bus);
+        }
+        self.cycles - start
+    }
+
     // -- Fetch --
 
     fn fetch(&mut self, bus: &mut dyn Bus) -> u8 {
