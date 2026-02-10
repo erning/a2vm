@@ -16,11 +16,11 @@ use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
 use a2vm_core::machine::AppleII;
-use a2vm_core::video::{self, RGBA_HEIGHT, RGBA_SIZE, RGBA_WIDTH};
+use a2vm_core::video::{self, RGBA_HEIGHT, RGBA_WIDTH};
 
-/// Logical framebuffer: 280 wide × 202 tall (192 display + 2px gap + 8px status bar).
+/// Logical framebuffer: 280 wide × 192 tall (display only, no status bar).
 const FB_WIDTH: u32 = RGBA_WIDTH as u32;
-const FB_HEIGHT: u32 = (RGBA_HEIGHT + 2 + 8) as u32; // 202
+const FB_HEIGHT: u32 = RGBA_HEIGHT as u32; // 192
 
 /// Default window scale.
 const SCALE: u32 = 3;
@@ -237,7 +237,6 @@ impl App {
             }
         }
 
-        // Update perf measurement
         let perf_now = Instant::now();
         let perf_elapsed = perf_now.saturating_duration_since(self.perf_last_time);
         if perf_elapsed >= PERF_SAMPLE_INTERVAL {
@@ -248,6 +247,39 @@ impl App {
             }
             self.perf_last_cycles = self.apple.cpu.cycles;
             self.perf_last_time = perf_now;
+
+            let cpu = &self.apple.cpu;
+            let mode = if self.apple.display.text {
+                "TEXT"
+            } else if self.apple.display.hires {
+                "HGR"
+            } else {
+                "GR"
+            };
+            let disk_status = if self.apple.disk.motor_on {
+                format!("D:T{}", self.apple.disk.half_track / 2)
+            } else {
+                "D:--".to_string()
+            };
+            let turbo_label = if self.turbo { " TURBO" } else { "" };
+            let fast_label = if self.apple.is_fast_disk() {
+                " FAST"
+            } else {
+                ""
+            };
+            eprintln!(
+                "PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
+                cpu.pc,
+                cpu.a,
+                cpu.x,
+                cpu.y,
+                cpu.sp,
+                mode,
+                disk_status,
+                turbo_label,
+                fast_label,
+                self.emu_mhz
+            );
         }
 
         // Flash toggle
@@ -262,47 +294,7 @@ impl App {
 
         let frame = pixels.frame_mut();
 
-        // Clear entire framebuffer to black
-        frame.fill(0);
-        // Set alpha for all pixels
-        for pixel in frame.chunks_exact_mut(4) {
-            pixel[3] = 0xFF;
-        }
-
-        // Render Apple II display into top 192 rows
-        let display_buf = &mut frame[..RGBA_SIZE];
-        video::render_rgba(
-            self.apple.ram(),
-            &self.apple.display,
-            self.flash_on,
-            display_buf,
-        );
-
-        // Status bar at y=194 (192 + 2px gap)
-        let cpu = &self.apple.cpu;
-        let mode = if self.apple.display.text {
-            "TEXT"
-        } else if self.apple.display.hires {
-            "HGR"
-        } else {
-            "GR"
-        };
-        let disk_status = if self.apple.disk.motor_on {
-            format!("D:T{}", self.apple.disk.half_track / 2)
-        } else {
-            "D:--".to_string()
-        };
-        let fast_label = if self.apple.is_fast_disk() {
-            " FAST"
-        } else {
-            ""
-        };
-        let status = format!(
-            "PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{} {:.2}MHz ^Q:Quit ^R:Rst ^T:Turbo",
-            cpu.pc, cpu.a, cpu.x, cpu.y, cpu.sp, mode, disk_status, fast_label, self.emu_mhz
-        );
-
-        video::render_status_bar(&status, frame, FB_WIDTH as usize, RGBA_HEIGHT + 2);
+        video::render_rgba(self.apple.ram(), &self.apple.display, self.flash_on, frame);
 
         pixels.render().ok();
     }
@@ -456,9 +448,7 @@ impl ApplicationHandler for App {
             window.request_redraw();
         }
 
-        _event_loop.set_control_flow(ControlFlow::WaitUntil(
-            Instant::now() + FRAME_INTERVAL,
-        ));
+        _event_loop.set_control_flow(ControlFlow::WaitUntil(Instant::now() + FRAME_INTERVAL));
     }
 }
 
