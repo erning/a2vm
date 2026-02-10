@@ -11,7 +11,9 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Terminal;
+#[cfg(feature = "audio")]
 use rodio::buffer::SamplesBuffer;
+#[cfg(feature = "audio")]
 use rodio::{OutputStream, Sink};
 
 use a2vm_core::machine::AppleII;
@@ -36,6 +38,7 @@ const FLASH_HALF_PERIOD_MS: u128 = 267;
 const PERF_SAMPLE_INTERVAL_MS: u64 = 250;
 
 /// PCM output sample rate.
+#[cfg(feature = "audio")]
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
 /// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
@@ -175,7 +178,10 @@ fn main() -> io::Result<()> {
     }
 
     if show_help || error {
-        eprintln!("Usage: {} --rom <file> [--disk <file> | --fast-disk <file>]", args[0]);
+        eprintln!(
+            "Usage: {} --rom <file> [--disk <file> | --fast-disk <file>]",
+            args[0]
+        );
         eprintln!();
         eprintln!("Options:");
         eprintln!("  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]");
@@ -217,10 +223,13 @@ fn main() -> io::Result<()> {
     apple.reset();
 
     // Set up audio playback (best-effort).
+    #[cfg(feature = "audio")]
     let mut audio: Option<(OutputStream, Sink)> = match OutputStream::try_default() {
         Ok((stream, handle)) => Sink::try_new(&handle).ok().map(|sink| (stream, sink)),
         Err(_) => None,
     };
+    #[cfg(not(feature = "audio"))]
+    let _audio: () = ();
 
     // Set up terminal
     terminal::enable_raw_mode()?;
@@ -301,6 +310,7 @@ fn main() -> io::Result<()> {
         if cycles_to_run != 0 {
             apple.run_cycles(cycles_to_run);
 
+            #[cfg(feature = "audio")]
             if let Some((_, sink)) = &mut audio {
                 let pcm = apple.take_audio_samples(AUDIO_SAMPLE_RATE);
                 if !pcm.is_empty() {

@@ -3,8 +3,12 @@ name = "a2vm-tui"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["audio"]
+audio = ["dep:rodio"]
+
 [dependencies]
 a2vm-core = { path = "../a2vm-core" }
-ratatui = "0.29"
-crossterm = "0.28"
-rodio = "0.20"
+ratatui = "0.30"
+crossterm = "0.29"
+rodio = { version = "0.21", optional = true }
