@@ -73,8 +73,11 @@ cargo test
 # Run CPU functional test
 cargo test klaus_dormann
 
-# Build release
+# Build release (with audio support)
 cargo build --release
+
+# Build without audio (if ALSA/libasound is unavailable)
+cargo build --release -p a2vm-tui --no-default-features
 
 # Run Apple II+ with disk
 cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"

@@ -15,8 +15,11 @@ A terminal-based Apple II/II+ emulator written in Rust. Features a complete 6502
 ## Quick Start
 
 ```bash
-# Build the project
+# Build the project (with audio support, requires ALSA on Linux)
 cargo build --release
+
+# Build without audio (if audio libraries are not available)
+cargo build --release -p a2vm-tui --no-default-features
 
 # Run with ROM only (enter Monitor)
 ./target/release/a2vm-tui --rom roms/apple2p.rom
@@ -77,7 +80,7 @@ cargo test klaus_dormann
 
 - **Rust Core**: 6502 CPU with Bus trait abstraction, AppleII machine emulation, Disk II, and speaker synthesis
 - **Video**: Unified 280×192 bitmap renderer with mode-specific pipelines
-- **Audio**: `$C030` speaker toggles converted to PCM in `a2vm-core`, played by `rodio` in `a2vm-tui`
+- **Audio** (optional): `$C030` speaker toggles converted to PCM in `a2vm-core`, played by `rodio` in `a2vm-tui`. Disable with `--no-default-features` if rodio/ALSA is unavailable
 - **TUI**: Braille encoding (2×4 dots per char) for terminal display and runtime status telemetry
 
 ## License
