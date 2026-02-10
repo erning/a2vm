@@ -18,12 +18,35 @@ A terminal-based Apple II/II+ emulator written in Rust. Features a complete 6502
 # Build the project
 cargo build --release
 
-# Run with an Apple II ROM
-./target/release/a2vm-tui path/to/rom.bin
+# Run with ROM only (enter Monitor)
+./target/release/a2vm-tui --rom roms/apple2p.rom
 
-# Run with ROM + DOS 3.3 disk
-./target/release/a2vm-tui roms/apple2p.rom "disks/Apple DOS 3.3 January 1983.dsk"
+# Run with a disk image
+./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
+
+# Fast-disk mode (DOS 3.3 RWTS trap for instant sector reads)
+./target/release/a2vm-tui --rom roms/apple2p.rom --fast-disk "disks/Apple DOS 3.3 January 1983.dsk"
+
+# Use A2VM_ROM environment variable to avoid typing --rom every time
+export A2VM_ROM=roms/apple2p.rom
+./target/release/a2vm-tui --disk "disks/Apple DOS 3.3 January 1983.dsk"
 ```
+
+### Command Line
+
+```
+a2vm-tui --rom <file> [--disk <file> | --fast-disk <file>]
+
+Options:
+  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
+  --disk <file>       .dsk disk image (143360 bytes)
+  --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap for instant sector reads
+  -h, --help          Show this help
+```
+
+- `--rom` is required; falls back to the `A2VM_ROM` environment variable
+- `--disk` and `--fast-disk` are mutually exclusive
+- `--fast-disk` traps the DOS 3.3 RWTS entry point (`$B7B5`) and copies sector data directly from the raw `.dsk` image, skipping nibble-level emulation. Only works with DOS 3.3 formatted disks
 
 ## Controls
 

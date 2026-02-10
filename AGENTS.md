@@ -76,9 +76,27 @@ cargo test klaus_dormann
 # Build release
 cargo build --release
 
-# Run Apple II+ ROM with DOS 3.3 disk
-cargo run -p a2vm-tui -- roms/apple2p.rom "disks/Apple DOS 3.3 January 1983.dsk"
+# Run Apple II+ with disk
+cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
+
+# Fast-disk mode (DOS 3.3 only)
+cargo run -p a2vm-tui -- --rom roms/apple2p.rom --fast-disk "disks/Apple DOS 3.3 January 1983.dsk"
 ```
+
+### CLI Reference
+
+```
+a2vm-tui --rom <file> [--disk <file> | --fast-disk <file>]
+
+  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
+  --disk <file>       .dsk disk image (143360 bytes)
+  --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap ($B7B5) for instant reads
+  -h, --help          Show this help
+```
+
+- `--rom` required; falls back to `A2VM_ROM` env var
+- `--disk` and `--fast-disk` are mutually exclusive
+- `--fast-disk` only works with DOS 3.3 formatted disks
 
 ## Testing
 
