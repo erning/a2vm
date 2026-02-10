@@ -147,6 +147,7 @@ struct App {
     #[allow(dead_code)]
     fast_disk: bool,
     modifiers: ModifiersState,
+    status_printed: bool,
 }
 
 impl App {
@@ -204,6 +205,7 @@ impl App {
             audio_sink,
             fast_disk: cli.fast_disk,
             modifiers: ModifiersState::empty(),
+            status_printed: false,
         }
     }
 
@@ -267,8 +269,8 @@ impl App {
             } else {
                 ""
             };
-            eprintln!(
-                "PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
+            eprint!(
+                "\rPC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
                 cpu.pc,
                 cpu.a,
                 cpu.x,
@@ -280,6 +282,7 @@ impl App {
                 fast_label,
                 self.emu_mhz
             );
+            self.status_printed = true;
         }
 
         // Flash toggle
@@ -337,6 +340,14 @@ impl App {
         // Map to Apple II ASCII
         if let Some(ascii) = map_winit_key(event, ctrl) {
             self.apple.key_press(ascii);
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        if self.status_printed {
+            eprintln!();
         }
     }
 }
