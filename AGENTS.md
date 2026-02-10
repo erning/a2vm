@@ -1,6 +1,6 @@
 # A2VM Knowledge Base
 
-**Apple II/II+ Emulator** — Rust core + terminal frontend.
+**Apple II/II+ Emulator** — Rust core with TUI and GUI frontends.
 
 ## Quick Reference
 
@@ -10,8 +10,9 @@
 | Bus + soft switches | `a2vm-core/src/bus.rs`, `a2vm-core/src/machine.rs` | Keyboard, display, speaker, disk I/O |
 | Disk II | `a2vm-core/src/disk.rs` | `.dsk` load, nibblized track reads |
 | Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
-| Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline |
-| TUI runtime | `a2vm-tui/src/main.rs` | Braille display, keyboard, audio playback |
+| Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline + RGBA output |
+| TUI runtime | `a2vm-tui/src/main.rs` | Braille display (140×48), keyboard, audio playback |
+| GUI runtime | `a2vm-gui/src/main.rs` | Native window (280×202), pixels+wgpu, full color |
 
 ## Project Structure
 
@@ -36,9 +37,13 @@ a2vm/
 │       └── klaus_dormann.rs
 ├── a2vm-tui/               # Terminal frontend
 │   └── src/main.rs
+├── a2vm-gui/               # Graphical frontend
+│   ├── Cargo.toml
+│   └── src/main.rs
 └── docs/
     ├── architecture.md
-    └── milestones.md
+    ├── milestones.md
+    └── gui-plan.md
 ```
 
 ## Key Conventions
@@ -73,23 +78,41 @@ cargo test
 # Run CPU functional test
 cargo test klaus_dormann
 
-# Build release (with audio support)
-cargo build --release
+# TUI --------------------------------------------------------
 
-# Build without audio (if ALSA/libasound is unavailable)
+# Build TUI release (with audio support)
+cargo build --release -p a2vm-tui
+
+# Build TUI without audio
 cargo build --release -p a2vm-tui --no-default-features
 
-# Run Apple II+ with disk
+# Run TUI with disk
 cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 
-# Fast-disk mode (DOS 3.3 only)
+# TUI fast-disk mode
 cargo run -p a2vm-tui -- --rom roms/apple2p.rom --fast-disk "disks/Apple DOS 3.3 January 1983.dsk"
+
+# GUI --------------------------------------------------------
+
+# Build GUI release (with audio support)
+cargo build --release -p a2vm-gui
+
+# Build GUI without audio
+cargo build --release -p a2vm-gui --no-default-features
+
+# Run GUI
+cargo run -p a2vm-gui -- --rom roms/apple2p.rom
+
+# GUI with disk
+cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 ```
 
 ### CLI Reference
 
+Both `a2vm-tui` and `a2vm-gui` support identical CLI:
+
 ```
-a2vm-tui --rom <file> [--disk <file> | --fast-disk <file>]
+a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
 
   --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
   --disk <file>       .dsk disk image (143360 bytes)

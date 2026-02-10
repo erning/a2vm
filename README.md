@@ -1,22 +1,26 @@
 # A2VM — Apple II Emulator
 
-A terminal-based Apple II/II+ emulator written in Rust. Features a complete 6502 CPU implementation, Disk II boot support, TEXT/GR/HGR rendering, 1-bit speaker audio, and a Braille-based TUI display.
+An Apple II/II+ emulator written in Rust featuring both terminal (TUI) and graphical (GUI) frontends. Includes a complete 6502 CPU implementation, Disk II boot support, TEXT/GR/HGR rendering with authentic color, 1-bit speaker audio, and both Braille-based terminal display and native GPU-accelerated GUI.
 
 ## Features
 
 - **Complete 6502 CPU**: All 56 official opcodes, 13 addressing modes, BCD arithmetic, and accurate cycle counting
 - **Video Modes**: TEXT (40×24), Lo-Res Graphics (40×48), Hi-Res Graphics (280×192), and Mixed mode
 - **Disk II Emulation**: Loads DOS 3.3 `.dsk` images and boots from slot 6
-- **Speaker Audio (M6)**: `$C030` toggle timestamps synthesized to PCM and played through the TUI frontend
-- **Terminal UI**: Renders Apple II display using Braille characters (140×48) with ratatui
+- **Speaker Audio (M6)**: `$C030` toggle timestamps synthesized to PCM and played through frontend
+- **Two Frontends**:
+  - **TUI**: Terminal UI with Braille characters (140×48) using ratatui
+  - **GUI**: Native GPU-accelerated window with authentic Apple II colors (Lo-Res 16-color, Hi-Res NTSC pseudo-colors, green phosphor text)
 - **Keyboard Input**: Full ASCII keyboard support with Apple II key mapping
 - **ROM Support**: Loads Apple II/II+ ROM files (12K/20K)
 
 ## Quick Start
 
+### TUI (Terminal UI)
+
 ```bash
-# Build the project (with audio support, requires ALSA on Linux)
-cargo build --release
+# Build the TUI (with audio support, requires ALSA on Linux)
+cargo build --release -p a2vm-tui
 
 # Build without audio (if audio libraries are not available)
 cargo build --release -p a2vm-tui --no-default-features
@@ -35,10 +39,28 @@ export A2VM_ROM=roms/apple2p.rom
 ./target/release/a2vm-tui --disk "disks/Apple DOS 3.3 January 1983.dsk"
 ```
 
-### Command Line
+### GUI (Graphical UI)
+
+```bash
+# Build the GUI (with audio support)
+cargo build --release -p a2vm-gui
+
+# Build without audio
+cargo build --release -p a2vm-gui --no-default-features
+
+# Run with ROM
+./target/release/a2vm-gui --rom roms/apple2p.rom
+
+# Run with disk
+cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
+```
+
+### Command Line Options
+
+Both frontends support the same CLI:
 
 ```
-a2vm-tui --rom <file> [--disk <file> | --fast-disk <file>]
+a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
 
 Options:
   --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
@@ -53,6 +75,8 @@ Options:
 
 ## Controls
 
+Both frontends use the same keyboard controls:
+
 | Key | Action |
 |-----|--------|
 | `Ctrl+Q` / `Ctrl+C` | Quit |
@@ -65,8 +89,10 @@ Options:
 
 ```
 a2vm/
-├── a2vm-core/     # Rust core library (CPU, memory, video)
-└── a2vm-tui/      # Terminal UI frontend
+├── a2vm-core/     # Rust core library (CPU, memory, video, audio)
+├── a2vm-tui/      # Terminal UI frontend (Braille display)
+├── a2vm-gui/      # Graphical UI frontend (pixels + winit)
+└── docs/          # Documentation (architecture, milestones, GUI plan)
 ```
 
 ## Testing
@@ -79,9 +105,10 @@ cargo test klaus_dormann
 ## Architecture
 
 - **Rust Core**: 6502 CPU with Bus trait abstraction, AppleII machine emulation, Disk II, and speaker synthesis
-- **Video**: Unified 280×192 bitmap renderer with mode-specific pipelines
-- **Audio** (optional): `$C030` speaker toggles converted to PCM in `a2vm-core`, played by `rodio` in `a2vm-tui`. Disable with `--no-default-features` if rodio/ALSA is unavailable
+- **Video**: Unified 280×192 bitmap renderer with mode-specific pipelines; RGBA output for GUI with authentic Apple II colors
+- **Audio** (optional): `$C030` speaker toggles converted to PCM in `a2vm-core`, played by `rodio`. Disable with `--no-default-features` if rodio/ALSA is unavailable
 - **TUI**: Braille encoding (2×4 dots per char) for terminal display and runtime status telemetry
+- **GUI**: Native window using `pixels` (wgpu) + `winit` with 280×202 resolution (192 display + status bar), 3× default scaling, full color support
 
 ## License
 
