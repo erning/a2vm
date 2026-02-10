@@ -1,0 +1,14 @@
+[package]
+name = "a2vm-gui"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["audio"]
+audio = ["dep:rodio"]
+
+[dependencies]
+a2vm-core = { path = "../a2vm-core" }
+pixels = "0.15"
+winit = "0.30"
+rodio = { version = "0.21", optional = true }
