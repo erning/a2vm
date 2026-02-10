@@ -16,7 +16,7 @@ use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
 use a2vm_core::machine::AppleII;
-use a2vm_core::video::{self, RGBA_HEIGHT, RGBA_WIDTH};
+use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
 
 /// Logical framebuffer: 280 wide × 192 tall (display only, no status bar).
 const FB_WIDTH: u32 = RGBA_WIDTH as u32;
@@ -50,6 +50,7 @@ struct CliArgs {
     rom_path: String,
     disk_file: Option<String>,
     fast_disk: bool,
+    color_mode: DisplayColorMode,
 }
 
 fn parse_args() -> CliArgs {
@@ -57,6 +58,7 @@ fn parse_args() -> CliArgs {
     let mut rom_path_str: Option<String> = None;
     let mut disk_path_str: Option<String> = None;
     let mut fast_disk_str: Option<String> = None;
+    let mut color_mode_str: Option<String> = None;
     let mut show_help = false;
     let mut error = false;
 
@@ -76,6 +78,10 @@ fn parse_args() -> CliArgs {
                 i += 1;
                 fast_disk_str = args.get(i).cloned();
             }
+            "--color-mode" => {
+                i += 1;
+                color_mode_str = args.get(i).cloned();
+            }
             other => {
                 eprintln!("Error: unknown option: {other}");
                 error = true;
@@ -89,9 +95,22 @@ fn parse_args() -> CliArgs {
         error = true;
     }
 
+    let color_mode = match color_mode_str.as_deref() {
+        Some("color") | None => DisplayColorMode::Color,
+        Some("mono") => DisplayColorMode::Monochrome,
+        Some("mono-scanlines") => DisplayColorMode::MonochromeScanlines,
+        Some(other) => {
+            eprintln!(
+                "Error: invalid color mode '{other}'; use 'color', 'mono', or 'mono-scanlines'"
+            );
+            error = true;
+            DisplayColorMode::Color
+        }
+    };
+
     if show_help || error {
         eprintln!(
-            "Usage: {} --rom <file> [--disk <file> | --fast-disk <file>]",
+            "Usage: {} --rom <file> [--disk <file> | --fast-disk <file>] [--color-mode <mode>]",
             args[0]
         );
         eprintln!();
@@ -100,6 +119,9 @@ fn parse_args() -> CliArgs {
         eprintln!("  --disk <file>       .dsk disk image (143360 bytes)");
         eprintln!("  --fast-disk <file>  .dsk disk image with DOS 3.3 RWTS trap ($B7B5)");
         eprintln!("                      for instant sector reads; only for DOS 3.3 disks");
+        eprintln!(
+            "  --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'"
+        );
         eprintln!("  -h, --help          Show this help");
         std::process::exit(if error { 2 } else { 0 });
     }
@@ -118,6 +140,7 @@ fn parse_args() -> CliArgs {
         rom_path,
         disk_file,
         fast_disk,
+        color_mode,
     }
 }
 
@@ -148,6 +171,8 @@ struct App {
     fast_disk: bool,
     modifiers: ModifiersState,
     status_printed: bool,
+    color_mode: DisplayColorMode,
+    frame_phase: u64,
 }
 
 impl App {
@@ -206,6 +231,8 @@ impl App {
             fast_disk: cli.fast_disk,
             modifiers: ModifiersState::empty(),
             status_printed: false,
+            color_mode: cli.color_mode,
+            frame_phase: 0,
         }
     }
 
@@ -297,7 +324,15 @@ impl App {
 
         let frame = pixels.frame_mut();
 
-        video::render_rgba(self.apple.ram(), &self.apple.display, self.flash_on, frame);
+        video::render_rgba(
+            self.apple.ram(),
+            &self.apple.display,
+            self.flash_on,
+            self.color_mode,
+            self.frame_phase,
+            frame,
+        );
+        self.frame_phase = self.frame_phase.wrapping_add(1);
 
         pixels.render().ok();
     }

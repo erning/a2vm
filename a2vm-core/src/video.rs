@@ -15,6 +15,18 @@ pub struct DisplayMode {
     pub hires: bool, // $C057/$C056: hi-res mode
 }
 
+/// Color mode for GUI display rendering.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum DisplayColorMode {
+    /// Full color (Lo-Res 16-color, Hi-Res NTSC artifact colors).
+    #[default]
+    Color,
+    /// Monochrome (green phosphor).
+    Monochrome,
+    /// Monochrome with simulated CRT scanlines.
+    MonochromeScanlines,
+}
+
 impl Default for DisplayMode {
     fn default() -> Self {
         Self {
@@ -286,6 +298,10 @@ const HIRES_BLACK: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
 const TEXT_FG: [u8; 4] = [0x33, 0xFF, 0x33, 0xFF];
 const TEXT_BG: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
 
+/// Monochrome colors (green phosphor).
+const MONO_FG: [u8; 4] = [0x33, 0xFF, 0x33, 0xFF];
+const MONO_BG: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
+
 /// Status bar colors.
 const STATUS_FG: [u8; 4] = [0x00, 0xFF, 0xFF, 0xFF]; // cyan
 const STATUS_BG: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
@@ -293,32 +309,67 @@ const STATUS_BG: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
 // ── RGBA rendering ──────────────────────────────────────────────────
 
 /// Render the current Apple II display into a 280×192 RGBA buffer.
-pub fn render_rgba(ram: &[u8], mode: &DisplayMode, flash_on: bool, rgba: &mut [u8]) {
+pub fn render_rgba(
+    ram: &[u8],
+    mode: &DisplayMode,
+    flash_on: bool,
+    color_mode: DisplayColorMode,
+    frame_phase: u64,
+    rgba: &mut [u8],
+) {
     debug_assert!(rgba.len() >= RGBA_SIZE);
 
     let page_offset: usize = if mode.page2 { 0x0400 } else { 0 };
 
     if mode.text {
-        fill_rgba(rgba, TEXT_BG);
-        render_text_rows_rgba(ram, rgba, flash_on, page_offset, 0, 24);
+        let bg = if color_mode == DisplayColorMode::Color {
+            TEXT_BG
+        } else {
+            MONO_BG
+        };
+        fill_rgba(rgba, bg);
+        render_text_rows_rgba(ram, rgba, flash_on, color_mode, page_offset, 0, 24);
     } else if mode.hires {
-        fill_rgba(rgba, HIRES_BLACK);
+        let bg = if color_mode == DisplayColorMode::Color {
+            HIRES_BLACK
+        } else {
+            MONO_BG
+        };
+        fill_rgba(rgba, bg);
         let hires_base: usize = if mode.page2 { 0x4000 } else { 0x2000 };
         let scanlines = if mode.mixed { 160 } else { 192 };
-        render_hires_scanlines_rgba(ram, rgba, hires_base, scanlines);
+        render_hires_scanlines_rgba(ram, rgba, hires_base, scanlines, color_mode);
         if mode.mixed {
-            // Clear text area
-            fill_rgba_region(rgba, TEXT_BG, 0, 160, RGBA_WIDTH, 32);
-            render_text_rows_rgba(ram, rgba, flash_on, page_offset, 20, 24);
+            let bg = if color_mode == DisplayColorMode::Color {
+                TEXT_BG
+            } else {
+                MONO_BG
+            };
+            fill_rgba_region(rgba, bg, 0, 160, RGBA_WIDTH, 32);
+            render_text_rows_rgba(ram, rgba, flash_on, color_mode, page_offset, 20, 24);
         }
     } else {
-        fill_rgba(rgba, LORES_PALETTE[0]);
+        let bg = if color_mode == DisplayColorMode::Color {
+            LORES_PALETTE[0]
+        } else {
+            MONO_BG
+        };
+        fill_rgba(rgba, bg);
         let text_rows = if mode.mixed { 20 } else { 24 };
-        render_lores_rows_rgba(ram, rgba, page_offset, text_rows);
+        render_lores_rows_rgba(ram, rgba, page_offset, text_rows, color_mode);
         if mode.mixed {
-            fill_rgba_region(rgba, TEXT_BG, 0, 160, RGBA_WIDTH, 32);
-            render_text_rows_rgba(ram, rgba, flash_on, page_offset, 20, 24);
+            let bg = if color_mode == DisplayColorMode::Color {
+                TEXT_BG
+            } else {
+                MONO_BG
+            };
+            fill_rgba_region(rgba, bg, 0, 160, RGBA_WIDTH, 32);
+            render_text_rows_rgba(ram, rgba, flash_on, color_mode, page_offset, 20, 24);
         }
+    }
+
+    if color_mode == DisplayColorMode::MonochromeScanlines {
+        apply_scanlines(rgba, frame_phase);
     }
 }
 
@@ -327,10 +378,22 @@ fn render_text_rows_rgba(
     ram: &[u8],
     rgba: &mut [u8],
     flash_on: bool,
+    color_mode: DisplayColorMode,
     page_offset: usize,
     start_row: usize,
     end_row: usize,
 ) {
+    let fg = if color_mode == DisplayColorMode::Color {
+        TEXT_FG
+    } else {
+        MONO_FG
+    };
+    let bg = if color_mode == DisplayColorMode::Color {
+        TEXT_BG
+    } else {
+        MONO_BG
+    };
+
     for (row, &line_addr) in TEXT_LINE_ADDR
         .iter()
         .enumerate()
@@ -353,7 +416,7 @@ fn render_text_rows_rgba(
                 let pixel_x = col * 7;
                 for bit in 0..7usize {
                     let on = pixels & (1 << bit) != 0;
-                    let color = if on { &TEXT_FG } else { &TEXT_BG };
+                    let color = if on { &fg } else { &bg };
                     let x = pixel_x + (6 - bit);
                     let idx = (pixel_y * RGBA_WIDTH + x) * 4;
                     rgba[idx..idx + 4].copy_from_slice(color);
@@ -369,6 +432,7 @@ fn render_lores_rows_rgba(
     rgba: &mut [u8],
     page_offset: usize,
     num_text_rows: usize,
+    color_mode: DisplayColorMode,
 ) {
     for (text_row, &line_addr) in TEXT_LINE_ADDR.iter().enumerate().take(num_text_rows) {
         let base = line_addr as usize + page_offset;
@@ -380,8 +444,22 @@ fn render_lores_rows_rgba(
             let px = col * 7;
             let py = text_row * 8;
 
-            fill_rgba_region(rgba, LORES_PALETTE[top_color], px, py, 7, 4);
-            fill_rgba_region(rgba, LORES_PALETTE[bot_color], px, py + 4, 7, 4);
+            if color_mode == DisplayColorMode::Color {
+                fill_rgba_region(rgba, LORES_PALETTE[top_color], px, py, 7, 4);
+                fill_rgba_region(rgba, LORES_PALETTE[bot_color], px, py + 4, 7, 4);
+            } else {
+                let top_on = top_color != 0;
+                let bot_on = bot_color != 0;
+                fill_rgba_region(rgba, if top_on { MONO_FG } else { MONO_BG }, px, py, 7, 4);
+                fill_rgba_region(
+                    rgba,
+                    if bot_on { MONO_FG } else { MONO_BG },
+                    px,
+                    py + 4,
+                    7,
+                    4,
+                );
+            }
         }
     }
 }
@@ -392,6 +470,7 @@ fn render_hires_scanlines_rgba(
     rgba: &mut [u8],
     base: usize,
     num_lines: usize,
+    color_mode: DisplayColorMode,
 ) {
     for y in 0..num_lines {
         let addr = hgr_line_addr(base, y);
@@ -403,46 +482,80 @@ fn render_hires_scanlines_rgba(
             for bit in 0..7usize {
                 let on = byte & (1 << bit) != 0;
                 let x = pixel_x + bit;
-                let screen_col = x; // absolute pixel column
+                let screen_col = x;
 
-                let color = if !on {
-                    &HIRES_BLACK
-                } else {
-                    // Check neighbors for white detection
-                    let prev_on = if x > 0 {
-                        // Previous pixel
-                        let prev_col = (x - 1) / 7;
-                        let prev_bit = (x - 1) % 7;
-                        ram[hgr_line_addr(base, y) + prev_col] & (1 << prev_bit) != 0
+                let color: [u8; 4] = if color_mode == DisplayColorMode::Color {
+                    if !on {
+                        HIRES_BLACK
                     } else {
-                        false
-                    };
-                    let next_on = if x < 279 {
-                        let next_col = (x + 1) / 7;
-                        let next_bit = (x + 1) % 7;
-                        ram[hgr_line_addr(base, y) + next_col] & (1 << next_bit) != 0
-                    } else {
-                        false
-                    };
-
-                    if prev_on || next_on {
-                        &HIRES_WHITE
-                    } else if high_bit {
-                        if screen_col % 2 == 0 {
-                            &HIRES_BLUE
+                        let prev_on = if x > 0 {
+                            let prev_col = (x - 1) / 7;
+                            let prev_bit = (x - 1) % 7;
+                            ram[hgr_line_addr(base, y) + prev_col] & (1 << prev_bit) != 0
                         } else {
-                            &HIRES_ORANGE
+                            false
+                        };
+                        let next_on = if x < 279 {
+                            let next_col = (x + 1) / 7;
+                            let next_bit = (x + 1) % 7;
+                            ram[hgr_line_addr(base, y) + next_col] & (1 << next_bit) != 0
+                        } else {
+                            false
+                        };
+
+                        if prev_on || next_on {
+                            HIRES_WHITE
+                        } else if high_bit {
+                            if screen_col % 2 == 0 {
+                                HIRES_BLUE
+                            } else {
+                                HIRES_ORANGE
+                            }
+                        } else if screen_col % 2 == 0 {
+                            HIRES_PURPLE
+                        } else {
+                            HIRES_GREEN
                         }
-                    } else if screen_col % 2 == 0 {
-                        &HIRES_PURPLE
-                    } else {
-                        &HIRES_GREEN
                     }
+                } else if on {
+                    MONO_FG
+                } else {
+                    MONO_BG
                 };
 
                 let idx = (y * RGBA_WIDTH + x) * 4;
-                rgba[idx..idx + 4].copy_from_slice(color);
+                rgba[idx..idx + 4].copy_from_slice(&color);
             }
+        }
+    }
+}
+
+fn apply_scanlines(rgba: &mut [u8], frame_phase: u64) {
+    let global_flicker = 0.985 + 0.015 * ((frame_phase as f32) * 0.11).sin();
+    let line_offset = ((frame_phase >> 4) & 1) as usize;
+
+    for y in 0..RGBA_HEIGHT {
+        let scanline = ((y + line_offset) & 1) == 1;
+        let row_wobble = 0.01 * ((y as f32) * 0.35 + (frame_phase as f32) * 0.07).sin();
+
+        for x in 0..RGBA_WIDTH {
+            let idx = (y * RGBA_WIDTH + x) * 4;
+            if idx + 3 >= rgba.len() {
+                continue;
+            }
+
+            let lum = (rgba[idx].max(rgba[idx + 1]).max(rgba[idx + 2]) as f32) * (1.0 / 255.0);
+            let mut keep = if scanline {
+                0.2 + 0.75 * lum + row_wobble
+            } else {
+                0.96 + 0.03 * lum
+            };
+            keep = (keep * global_flicker).clamp(0.35, 1.0);
+
+            let gain = (keep * 256.0) as u16;
+            rgba[idx] = ((rgba[idx] as u16 * gain) >> 8) as u8;
+            rgba[idx + 1] = ((rgba[idx + 1] as u16 * gain) >> 8) as u8;
+            rgba[idx + 2] = ((rgba[idx + 2] as u16 * gain) >> 8) as u8;
         }
     }
 }
