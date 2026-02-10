@@ -14,7 +14,7 @@ use ratatui::Terminal;
 #[cfg(feature = "audio")]
 use rodio::buffer::SamplesBuffer;
 #[cfg(feature = "audio")]
-use rodio::{OutputStream, Sink};
+use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
 use a2vm_core::machine::AppleII;
 use a2vm_core::video::{self, BITMAP_HEIGHT, BITMAP_SIZE, BITMAP_STRIDE, BITMAP_WIDTH};
@@ -224,8 +224,11 @@ fn main() -> io::Result<()> {
 
     // Set up audio playback (best-effort).
     #[cfg(feature = "audio")]
-    let mut audio: Option<(OutputStream, Sink)> = match OutputStream::try_default() {
-        Ok((stream, handle)) => Sink::try_new(&handle).ok().map(|sink| (stream, sink)),
+    let mut audio: Option<(OutputStream, Sink)> = match OutputStreamBuilder::open_default_stream() {
+        Ok(stream_handle) => {
+            let sink = Sink::connect_new(stream_handle.mixer());
+            Some((stream_handle, sink))
+        }
         Err(_) => None,
     };
     #[cfg(not(feature = "audio"))]
@@ -389,13 +392,8 @@ fn main() -> io::Result<()> {
                         "D:--".to_string()
                     };
                     let fast_label = if apple.is_fast_disk() { " FAST" } else { "" };
-                    let target_mhz = if turbo {
-                        (CPU_HZ * TURBO_MULTIPLIER) as f64 / 1_000_000.0
-                    } else {
-                        CPU_HZ as f64 / 1_000_000.0
-                    };
                     let status = format!(
-                        " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{} {} EMU:{:.2}/{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
+                        " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{} EMU:{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
                         cpu.pc,
                         cpu.a,
                         cpu.x,
@@ -405,9 +403,7 @@ fn main() -> io::Result<()> {
                         mode,
                         disk_status,
                         fast_label,
-                        if turbo { "TURBOx4" } else { "TURBOoff" },
-                        emu_mhz,
-                        target_mhz
+                        emu_mhz
                     );
                     let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
                     let status_bar = Paragraph::new(Line::from(Span::styled(

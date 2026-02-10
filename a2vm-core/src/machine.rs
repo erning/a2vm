@@ -125,13 +125,11 @@ impl AppleII {
                 cpu.run_until(self, remaining, 0xB7B5);
                 self.cpu = cpu;
 
-                if self.cpu.pc == 0xB7B5 {
-                    if self.try_rwts_trap().is_none() {
-                        // Not trappable (e.g. write), step past normally
-                        let mut cpu = mem::take(&mut self.cpu);
-                        cpu.step(self);
-                        self.cpu = cpu;
-                    }
+                if self.cpu.pc == 0xB7B5 && self.try_rwts_trap().is_none() {
+                    // Not trappable (e.g. write), step past normally
+                    let mut cpu = mem::take(&mut self.cpu);
+                    cpu.step(self);
+                    self.cpu = cpu;
                 }
             }
             self.cpu.cycles - start
