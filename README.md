@@ -10,7 +10,7 @@ An Apple II/II+ emulator written in Rust featuring both terminal (TUI) and graph
 - **Speaker Audio (M6)**: `$C030` toggle timestamps synthesized to PCM and played through frontend
 - **Two Frontends**:
   - **TUI**: Terminal UI with Braille characters (140×48) using ratatui
-  - **GUI**: Native GPU-accelerated window with authentic Apple II colors (Lo-Res 16-color, Hi-Res NTSC pseudo-colors, green phosphor text)
+  - **GUI**: Native GPU-accelerated window with authentic Apple II colors plus monochrome CRT modes (`color`, `mono`, `mono-scanlines`)
 - **Keyboard Input**: Full ASCII keyboard support with Apple II key mapping
 - **ROM Support**: Loads Apple II/II+ ROM files (12K/20K)
 
@@ -51,13 +51,16 @@ cargo build --release -p a2vm-gui --no-default-features
 # Run with ROM
 ./target/release/a2vm-gui --rom roms/apple2p.rom
 
+# Run with monochrome scanline mode
+./target/release/a2vm-gui --rom roms/apple2p.rom --color-mode mono-scanlines
+
 # Run with disk
 cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 ```
 
 ### Command Line Options
 
-Both frontends support the same CLI:
+Shared options:
 
 ```
 a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
@@ -67,6 +70,14 @@ Options:
   --disk <file>       .dsk disk image (143360 bytes)
   --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap for instant sector reads
   -h, --help          Show this help
+```
+
+GUI-only option:
+
+```
+a2vm-gui ... [--color-mode <mode>]
+
+  --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'
 ```
 
 - `--rom` is required; falls back to the `A2VM_ROM` environment variable
@@ -108,7 +119,7 @@ cargo test klaus_dormann
 - **Video**: Unified 280×192 bitmap renderer with mode-specific pipelines; RGBA output for GUI with authentic Apple II colors
 - **Audio** (optional): `$C030` speaker toggles converted to PCM in `a2vm-core`, played by `rodio`. Disable with `--no-default-features` if rodio/ALSA is unavailable
 - **TUI**: Braille encoding (2×4 dots per char) for terminal display and runtime status telemetry
-- **GUI**: Native window using `pixels` (wgpu) + `winit` with 280×202 resolution (192 display + status bar), 3× default scaling, full color support
+- **GUI**: Native window using `pixels` (wgpu) + `winit` with 280×192 resolution, 3× default scaling, status output in console, and `color`/`mono`/`mono-scanlines` display modes
 
 ## License
 
@@ -117,3 +128,5 @@ MIT
 ## Demo
 
 [![asciicast](https://asciinema.org/a/pkGK4iQGW7P6XFMT.svg)](https://asciinema.org/a/pkGK4iQGW7P6XFMT)
+
+![Image](https://github.com/user-attachments/assets/c1f33259-a0df-402d-9844-effebaa4fba2)

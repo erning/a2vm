@@ -26,7 +26,14 @@
 
 **函数：**
 ```rust
-pub fn render_rgba(ram: &[u8], mode: &DisplayMode, flash_on: bool, rgba: &mut [u8])
+pub fn render_rgba(
+    ram: &[u8],
+    mode: &DisplayMode,
+    flash_on: bool,
+    color_mode: DisplayColorMode,
+    frame_phase: u64,
+    rgba: &mut [u8],
+)
 ```
 内部分派到三个模式渲染器：
 
@@ -37,11 +44,8 @@ pub fn render_rgba(ram: &[u8], mode: &DisplayMode, flash_on: bool, rgba: &mut [u
    - bit7=1: even col→Blue, odd col→Orange
    - 相邻两个 ON 像素→White; OFF→Black
 
-**状态栏渲染器：**
-```rust
-pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: usize)
-```
-用 CHAR_ROM 在 RGBA 缓冲区底部绘制状态文字（青色，40字符/行）。
+**状态输出：**
+- GUI 不再在窗口内绘制状态栏，状态信息输出到控制台（stderr）并在同一行刷新。
 
 ## Step 2: 创建 a2vm-gui crate
 
@@ -70,8 +74,8 @@ workspace `Cargo.toml` 加入 `"a2vm-gui"`。
 结构参照 TUI (`a2vm-tui/src/main.rs`, 427行)，单文件。
 
 ### 窗口设置
-- 逻辑分辨率：280×202（192 显示 + 2px 间隔 + 8px 状态栏）
-- 默认窗口：3× 缩放 = 840×606
+- 逻辑分辨率：280×192（仅显示区域，无状态栏）
+- 默认窗口：3× 缩放 = 840×576
 - `pixels` 自动 GPU 缩放
 
 ### App 结构体 + ApplicationHandler
@@ -80,7 +84,7 @@ struct App {
     apple: AppleII,
     pixels: Option<Pixels>,
     window: Option<Arc<Window>>,
-    rgba_buf: Vec<u8>,        // 280*202*4
+    rgba_buf: Vec<u8>,        // 280*192*4
     // 时序状态（同 TUI）
     last_tick: Instant,
     cycle_accum: u128,
@@ -126,7 +130,8 @@ struct App {
 与 TUI 相同：rodio OutputStreamBuilder + Sink，在 about_to_wait 中取样。
 
 ### CLI 参数
-与 TUI 相同：`--rom`, `--disk`, `--fast-disk`, `--help`，支持 `A2VM_ROM` 环境变量。
+- 共享参数：`--rom`, `--disk`, `--fast-disk`, `--help`，支持 `A2VM_ROM` 环境变量。
+- GUI 额外参数：`--color-mode <mode>`，可选 `color`（默认）、`mono`、`mono-scanlines`。
 
 ## 实现顺序
 
@@ -136,7 +141,7 @@ struct App {
 4. **连接 AppleII** — ROM 加载、CPU 执行、render_rgba 渲染
 5. **键盘输入** — 完成交互
 6. **音频** — rodio 集成
-7. **状态栏** — 底部渲染状态信息
+7. **状态输出** — 控制台同一行输出运行状态信息
 
 ## 验证
 

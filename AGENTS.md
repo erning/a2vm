@@ -12,7 +12,7 @@
 | Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
 | Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline + RGBA output |
 | TUI runtime | `a2vm-tui/src/main.rs` | Braille display (140×48), keyboard, audio playback |
-| GUI runtime | `a2vm-gui/src/main.rs` | Native window (280×202), pixels+wgpu, full color |
+| GUI runtime | `a2vm-gui/src/main.rs` | Native window (280×192), pixels+wgpu, color/mono/mono-scanlines |
 
 ## Project Structure
 
@@ -109,7 +109,7 @@ cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 Janu
 
 ### CLI Reference
 
-Both `a2vm-tui` and `a2vm-gui` support identical CLI:
+Shared options:
 
 ```
 a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
@@ -118,6 +118,14 @@ a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
   --disk <file>       .dsk disk image (143360 bytes)
   --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap ($B7B5) for instant reads
   -h, --help          Show this help
+```
+
+GUI-only option:
+
+```
+a2vm-gui ... [--color-mode <mode>]
+
+  --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'
 ```
 
 - `--rom` required; falls back to `A2VM_ROM` env var
