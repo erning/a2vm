@@ -247,6 +247,264 @@ fn fill_rect(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize, w: usize, h: us
     }
 }
 
+// ── RGBA constants ──────────────────────────────────────────────────
+
+/// RGBA frame dimensions (same as monochrome bitmap).
+pub const RGBA_WIDTH: usize = 280;
+pub const RGBA_HEIGHT: usize = 192;
+pub const RGBA_SIZE: usize = RGBA_WIDTH * RGBA_HEIGHT * 4;
+
+/// Apple II standard Lo-Res 16-color palette (RGBA).
+const LORES_PALETTE: [[u8; 4]; 16] = [
+    [0x00, 0x00, 0x00, 0xFF], //  0: Black
+    [0xDD, 0x00, 0x33, 0xFF], //  1: Magenta (Deep Red)
+    [0x00, 0x00, 0x99, 0xFF], //  2: Dark Blue
+    [0xDD, 0x22, 0xDD, 0xFF], //  3: Purple (Violet)
+    [0x00, 0x77, 0x22, 0xFF], //  4: Dark Green
+    [0x55, 0x55, 0x55, 0xFF], //  5: Grey 1
+    [0x22, 0x22, 0xFF, 0xFF], //  6: Medium Blue
+    [0x66, 0xAA, 0xFF, 0xFF], //  7: Light Blue
+    [0x88, 0x55, 0x00, 0xFF], //  8: Brown
+    [0xFF, 0x66, 0x00, 0xFF], //  9: Orange
+    [0xAA, 0xAA, 0xAA, 0xFF], // 10: Grey 2
+    [0xFF, 0x99, 0x88, 0xFF], // 11: Pink
+    [0x11, 0xDD, 0x00, 0xFF], // 12: Green (Light Green)
+    [0xFF, 0xFF, 0x00, 0xFF], // 13: Yellow
+    [0x44, 0xFF, 0x99, 0xFF], // 14: Aquamarine
+    [0xFF, 0xFF, 0xFF, 0xFF], // 15: White
+];
+
+/// Hi-Res NTSC artifact colors.
+const HIRES_PURPLE: [u8; 4] = [0xDD, 0x22, 0xDD, 0xFF];
+const HIRES_GREEN: [u8; 4] = [0x11, 0xDD, 0x00, 0xFF];
+const HIRES_BLUE: [u8; 4] = [0x22, 0x22, 0xFF, 0xFF];
+const HIRES_ORANGE: [u8; 4] = [0xFF, 0x66, 0x00, 0xFF];
+const HIRES_WHITE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+const HIRES_BLACK: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
+
+/// Text mode phosphor colors.
+const TEXT_FG: [u8; 4] = [0x33, 0xFF, 0x33, 0xFF];
+const TEXT_BG: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
+
+/// Status bar colors.
+const STATUS_FG: [u8; 4] = [0x00, 0xFF, 0xFF, 0xFF]; // cyan
+const STATUS_BG: [u8; 4] = [0x00, 0x00, 0x00, 0xFF];
+
+// ── RGBA rendering ──────────────────────────────────────────────────
+
+/// Render the current Apple II display into a 280×192 RGBA buffer.
+pub fn render_rgba(ram: &[u8], mode: &DisplayMode, flash_on: bool, rgba: &mut [u8]) {
+    debug_assert!(rgba.len() >= RGBA_SIZE);
+
+    let page_offset: usize = if mode.page2 { 0x0400 } else { 0 };
+
+    if mode.text {
+        fill_rgba(rgba, TEXT_BG);
+        render_text_rows_rgba(ram, rgba, flash_on, page_offset, 0, 24);
+    } else if mode.hires {
+        fill_rgba(rgba, HIRES_BLACK);
+        let hires_base: usize = if mode.page2 { 0x4000 } else { 0x2000 };
+        let scanlines = if mode.mixed { 160 } else { 192 };
+        render_hires_scanlines_rgba(ram, rgba, hires_base, scanlines);
+        if mode.mixed {
+            // Clear text area
+            fill_rgba_region(rgba, TEXT_BG, 0, 160, RGBA_WIDTH, 32);
+            render_text_rows_rgba(ram, rgba, flash_on, page_offset, 20, 24);
+        }
+    } else {
+        fill_rgba(rgba, LORES_PALETTE[0]);
+        let text_rows = if mode.mixed { 20 } else { 24 };
+        render_lores_rows_rgba(ram, rgba, page_offset, text_rows);
+        if mode.mixed {
+            fill_rgba_region(rgba, TEXT_BG, 0, 160, RGBA_WIDTH, 32);
+            render_text_rows_rgba(ram, rgba, flash_on, page_offset, 20, 24);
+        }
+    }
+}
+
+/// Render text rows `start_row..end_row` into RGBA buffer.
+fn render_text_rows_rgba(
+    ram: &[u8],
+    rgba: &mut [u8],
+    flash_on: bool,
+    page_offset: usize,
+    start_row: usize,
+    end_row: usize,
+) {
+    for (row, &line_addr) in TEXT_LINE_ADDR
+        .iter()
+        .enumerate()
+        .take(end_row)
+        .skip(start_row)
+    {
+        let base = line_addr as usize + page_offset;
+        for col in 0..40usize {
+            let screen_code = ram[base + col];
+            let char_index = (screen_code & 0x3F) as usize;
+            let is_inverse = screen_code < 0x40 || (screen_code < 0x80 && flash_on);
+
+            for line in 0..8usize {
+                let mut pixels = CHAR_ROM[char_index * 8 + line];
+                if is_inverse {
+                    pixels ^= 0x7F;
+                }
+
+                let pixel_y = row * 8 + line;
+                let pixel_x = col * 7;
+                for bit in 0..7usize {
+                    let on = pixels & (1 << bit) != 0;
+                    let color = if on { &TEXT_FG } else { &TEXT_BG };
+                    let x = pixel_x + (6 - bit);
+                    let idx = (pixel_y * RGBA_WIDTH + x) * 4;
+                    rgba[idx..idx + 4].copy_from_slice(color);
+                }
+            }
+        }
+    }
+}
+
+/// Render lo-res graphics rows into RGBA buffer.
+fn render_lores_rows_rgba(
+    ram: &[u8],
+    rgba: &mut [u8],
+    page_offset: usize,
+    num_text_rows: usize,
+) {
+    for (text_row, &line_addr) in TEXT_LINE_ADDR.iter().enumerate().take(num_text_rows) {
+        let base = line_addr as usize + page_offset;
+        for col in 0..40usize {
+            let byte = ram[base + col];
+            let top_color = (byte & 0x0F) as usize;
+            let bot_color = (byte >> 4) as usize;
+
+            let px = col * 7;
+            let py = text_row * 8;
+
+            fill_rgba_region(rgba, LORES_PALETTE[top_color], px, py, 7, 4);
+            fill_rgba_region(rgba, LORES_PALETTE[bot_color], px, py + 4, 7, 4);
+        }
+    }
+}
+
+/// Render hi-res scanlines into RGBA buffer with NTSC artifact color.
+fn render_hires_scanlines_rgba(
+    ram: &[u8],
+    rgba: &mut [u8],
+    base: usize,
+    num_lines: usize,
+) {
+    for y in 0..num_lines {
+        let addr = hgr_line_addr(base, y);
+        for col in 0..40usize {
+            let byte = ram[addr + col];
+            let high_bit = byte & 0x80 != 0;
+            let pixel_x = col * 7;
+
+            for bit in 0..7usize {
+                let on = byte & (1 << bit) != 0;
+                let x = pixel_x + bit;
+                let screen_col = x; // absolute pixel column
+
+                let color = if !on {
+                    &HIRES_BLACK
+                } else {
+                    // Check neighbors for white detection
+                    let prev_on = if x > 0 {
+                        // Previous pixel
+                        let prev_col = (x - 1) / 7;
+                        let prev_bit = (x - 1) % 7;
+                        ram[hgr_line_addr(base, y) + prev_col] & (1 << prev_bit) != 0
+                    } else {
+                        false
+                    };
+                    let next_on = if x < 279 {
+                        let next_col = (x + 1) / 7;
+                        let next_bit = (x + 1) % 7;
+                        ram[hgr_line_addr(base, y) + next_col] & (1 << next_bit) != 0
+                    } else {
+                        false
+                    };
+
+                    if prev_on || next_on {
+                        &HIRES_WHITE
+                    } else if high_bit {
+                        if screen_col % 2 == 0 {
+                            &HIRES_BLUE
+                        } else {
+                            &HIRES_ORANGE
+                        }
+                    } else if screen_col % 2 == 0 {
+                        &HIRES_PURPLE
+                    } else {
+                        &HIRES_GREEN
+                    }
+                };
+
+                let idx = (y * RGBA_WIDTH + x) * 4;
+                rgba[idx..idx + 4].copy_from_slice(color);
+            }
+        }
+    }
+}
+
+/// Render a status bar line into an RGBA buffer using CHAR_ROM glyphs.
+///
+/// `rgba` — target buffer (must be at least `stride * (y_offset + 8) * 4` bytes).
+/// `stride` — pixel width of the buffer (e.g. 280).
+/// `y_offset` — pixel row where the status bar starts.
+pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: usize) {
+    for (col, ch) in text.chars().take(40).enumerate() {
+        let ascii = ch as u8;
+        // CHAR_ROM layout: @ABC..Z[\]^_ !"#..0-9:;<=>?
+        // ASCII 0x20-0x3F (space..?) → ROM indices 32..63
+        // ASCII 0x40-0x5F (@.._ )  → ROM indices 0..31
+        let char_index = if ascii >= 0x20 && ascii < 0x40 {
+            (ascii - 0x20 + 32) as usize
+        } else if ascii >= 0x40 && ascii < 0x60 {
+            (ascii - 0x40) as usize
+        } else {
+            0
+        };
+
+        for line in 0..8usize {
+            let pixels = CHAR_ROM[char_index * 8 + line];
+            let py = y_offset + line;
+            let px = col * 7;
+            for bit in 0..7usize {
+                let on = pixels & (1 << bit) != 0;
+                let color = if on { &STATUS_FG } else { &STATUS_BG };
+                let x = px + (6 - bit);
+                let idx = (py * stride + x) * 4;
+                if idx + 4 <= rgba.len() {
+                    rgba[idx..idx + 4].copy_from_slice(color);
+                }
+            }
+        }
+    }
+}
+
+// ── RGBA helpers ────────────────────────────────────────────────────
+
+/// Fill entire RGBA buffer with a single color.
+fn fill_rgba(rgba: &mut [u8], color: [u8; 4]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        pixel.copy_from_slice(&color);
+    }
+}
+
+/// Fill a rectangular region in the RGBA buffer.
+fn fill_rgba_region(rgba: &mut [u8], color: [u8; 4], x: usize, y: usize, w: usize, h: usize) {
+    for dy in 0..h {
+        let row_start = ((y + dy) * RGBA_WIDTH + x) * 4;
+        for dx in 0..w {
+            let idx = row_start + dx * 4;
+            if idx + 4 <= rgba.len() {
+                rgba[idx..idx + 4].copy_from_slice(&color);
+            }
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
