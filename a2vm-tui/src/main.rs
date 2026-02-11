@@ -303,9 +303,10 @@ fn main() -> io::Result<()> {
         }
 
         cycle_accum += dt.as_nanos() * CPU_HZ as u128;
-        let mut cycles_to_run = (cycle_accum / 1_000_000_000) as u64;
+        let real_cycles = (cycle_accum / 1_000_000_000) as u64;
         cycle_accum %= 1_000_000_000;
 
+        let mut cycles_to_run = real_cycles;
         if turbo {
             cycles_to_run = cycles_to_run.saturating_mul(TURBO_MULTIPLIER);
         }
@@ -315,7 +316,7 @@ fn main() -> io::Result<()> {
 
             #[cfg(feature = "audio")]
             if let Some((_, sink)) = &mut audio {
-                let pcm = apple.take_audio_samples(AUDIO_SAMPLE_RATE);
+                let pcm = apple.take_audio_samples(AUDIO_SAMPLE_RATE, real_cycles);
                 if !pcm.is_empty() {
                     sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, pcm));
                 }

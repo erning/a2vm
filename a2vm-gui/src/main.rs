@@ -247,9 +247,10 @@ impl App {
         }
 
         self.cycle_accum += dt.as_nanos() * CPU_HZ as u128;
-        let mut cycles_to_run = (self.cycle_accum / 1_000_000_000) as u64;
+        let real_cycles = (self.cycle_accum / 1_000_000_000) as u64;
         self.cycle_accum %= 1_000_000_000;
 
+        let mut cycles_to_run = real_cycles;
         if self.turbo {
             cycles_to_run = cycles_to_run.saturating_mul(TURBO_MULTIPLIER);
         }
@@ -259,7 +260,7 @@ impl App {
 
             #[cfg(feature = "audio")]
             if let Some(ref sink) = self.audio_sink {
-                let pcm = self.apple.take_audio_samples(AUDIO_SAMPLE_RATE);
+                let pcm = self.apple.take_audio_samples(AUDIO_SAMPLE_RATE, real_cycles);
                 if !pcm.is_empty() {
                     sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, pcm));
                 }

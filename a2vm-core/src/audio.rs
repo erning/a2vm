@@ -39,6 +39,29 @@ impl Speaker {
         self.toggles.push_back(cycle);
     }
 
+    /// Current audio position in CPU cycles.
+    pub fn position(&self) -> u64 {
+        self.next_sample_cycle as u64
+    }
+
+    /// Fast-forward audio position to the given cycle without generating samples.
+    /// Processes any speaker toggles in the skipped interval to keep state correct.
+    pub fn skip_to(&mut self, cycle: u64) {
+        let target = cycle as f64;
+        if target <= self.next_sample_cycle {
+            return;
+        }
+        while let Some(&edge) = self.toggles.front() {
+            if (edge as f64) <= target {
+                self.state = !self.state;
+                self.toggles.pop_front();
+            } else {
+                break;
+            }
+        }
+        self.next_sample_cycle = target;
+    }
+
     /// Synthesize PCM samples up to `target_cycle`.
     pub fn render_until(&mut self, target_cycle: u64, sample_rate: u32) -> Vec<f32> {
         if sample_rate == 0 {

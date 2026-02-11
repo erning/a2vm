@@ -174,9 +174,21 @@ impl AppleII {
         &self.ram
     }
 
-    /// Drain synthesized speaker PCM up to current CPU cycle.
-    pub fn take_audio_samples(&mut self, sample_rate: u32) -> Vec<f32> {
-        self.speaker.render_until(self.cpu.cycles, sample_rate)
+    /// Drain synthesized speaker PCM.
+    ///
+    /// `real_cycles` is the wall-clock-equivalent cycle budget (before turbo/
+    /// fast-disk multiplication). Audio is rendered only for this many cycles
+    /// to prevent buffer accumulation during accelerated execution.
+    pub fn take_audio_samples(&mut self, sample_rate: u32, real_cycles: u64) -> Vec<f32> {
+        let render_target = self
+            .speaker
+            .position()
+            .saturating_add(real_cycles)
+            .min(self.cpu.cycles);
+        let samples = self.speaker.render_until(render_target, sample_rate);
+        // Fast-forward past any accelerated cycles
+        self.speaker.skip_to(self.cpu.cycles);
+        samples
     }
 }
 
@@ -412,9 +424,10 @@ mod tests {
             crate::bus::Bus::read(&mut apple, 0xC030);
         }
 
-        apple.cpu.cycles = 200 * half_period;
+        let total_cycles = 200 * half_period;
+        apple.cpu.cycles = total_cycles;
 
-        let pcm = apple.take_audio_samples(44_100);
+        let pcm = apple.take_audio_samples(44_100, total_cycles);
         assert!(!pcm.is_empty());
         let energy: f32 = pcm.iter().map(|v| v.abs()).sum::<f32>() / pcm.len() as f32;
         assert!(energy > 0.005);
