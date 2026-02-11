@@ -292,7 +292,7 @@ impl App {
         if ctrl {
             if let Key::Character(c) = &event.logical_key {
                 match c.as_str() {
-                    "q" | "c" => {
+                    "q" => {
                         event_loop.exit();
                         return;
                     }

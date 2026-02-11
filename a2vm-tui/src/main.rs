@@ -183,10 +183,9 @@ fn main() -> io::Result<()> {
         // Poll keyboard events (non-blocking)
         while event::poll(Duration::ZERO)? {
             if let Event::Key(key) = event::read()? {
-                // Ctrl+Q or Ctrl+C → quit
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Char('c') => {
+                        KeyCode::Char('q') => {
                             // Restore terminal (best-effort: don't propagate cleanup errors)
                             terminal::disable_raw_mode().ok();
                             execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)

@@ -98,7 +98,7 @@ Both frontends use the same keyboard controls:
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+Q` / `Ctrl+C` | Quit |
+| `Ctrl+Q` | Quit |
 | `Ctrl+R` | Reset |
 | `Ctrl+T` | Toggle turbo (x4) |
 | Arrow Keys | Apple II arrow keys |
