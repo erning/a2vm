@@ -25,6 +25,7 @@ a2vm/
 |  |  |- error.rs
 |  |  |- machine.rs
 |  |  |- memory.rs
+|  |  |- timing.rs
 |  |  |- video.rs
 |  |  `- cpu/
 |  |     |- mod.rs
@@ -37,14 +38,15 @@ a2vm/
 |     |- klaus_dormann.rs
 |     `- data/6502_functional_test.bin
 |- a2vm-tui/
-|  `- src/main.rs
+|  `- src/
+|     |- main.rs
+|     `- cli.rs
 |- a2vm-gui/
-|  `- src/main.rs
+|  `- src/
+|     |- main.rs
+|     `- cli.rs
 `- docs/
-   |- architecture.md
-   |- code-review.md
-   |- improvement-plan.md
-   `- milestones.md
+   `- architecture.md
 ```
 
 ## Runtime Architecture
@@ -122,6 +124,12 @@ Speaker edge-timeline synthesis.
 - renders PCM by cycle budget
 - supports reusable output buffer API to reduce allocations
 
+### timing.rs
+
+Shared timing constants used by core and frontends.
+
+- `CPU_HZ` provides a single source of truth for Apple II target cycle timing
+
 ### error.rs
 
 Typed core error enum for ROM/disk operations.
@@ -133,14 +141,14 @@ Typed core error enum for ROM/disk operations.
 
 ### a2vm-tui
 
-- CLI argument parsing (`--rom`, `--disk`, `--fast-disk`)
+- clap-based CLI argument parsing (`--rom`, `--disk`, `--fast-disk`) in `src/cli.rs`
 - terminal rendering through Braille conversion
 - keyboard mapping to Apple II ASCII
 - optional audio playback with rodio
 
 ### a2vm-gui
 
-- CLI argument parsing (`--rom`, `--disk`, `--fast-disk`, `--color-mode`)
+- clap-based CLI argument parsing (`--rom`, `--disk`, `--fast-disk`, `--color-mode`) in `src/cli.rs`
 - native event loop with winit
 - framebuffer presentation with pixels
 - optional audio playback with rodio
@@ -155,6 +163,6 @@ ROM/disk integration tests are resilient to missing external assets by returning
 
 ## Known Boundaries
 
-- TUI and GUI still contain duplicated frontend-side timing/CLI logic by design for now
-- unofficial 6502 opcodes are currently logged in debug and treated as NOP
-- `Cpu` register fields remain publicly accessible for debugging and frontend status display
+- TUI and GUI intentionally keep separate frontend-side timing/CLI definitions to allow independent evolution
+- unofficial 6502 opcode coverage is partial; unsupported cases currently fall back to placeholder behavior
+- `Cpu` register fields are private and exposed via inline accessors for frontend status display

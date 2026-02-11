@@ -10,9 +10,10 @@
 | Bus + soft switches | `a2vm-core/src/bus.rs`, `a2vm-core/src/machine.rs` | Keyboard, display, speaker, disk I/O |
 | Disk II | `a2vm-core/src/disk.rs` | `.dsk` load, nibblized track reads |
 | Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
+| Shared timing constants | `a2vm-core/src/timing.rs` | `CPU_HZ` for cycle timing |
 | Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline + RGBA output |
-| TUI runtime | `a2vm-tui/src/main.rs` | Braille display (140×48), keyboard, audio playback |
-| GUI runtime | `a2vm-gui/src/main.rs` | Native window (280×192), pixels+wgpu, color/mono/mono-scanlines |
+| TUI runtime | `a2vm-tui/src/main.rs`, `a2vm-tui/src/cli.rs` | Braille display (140×48), keyboard, clap CLI |
+| GUI runtime | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | Native window (280×192), pixels+wgpu, clap CLI |
 
 ## Project Structure
 
@@ -21,34 +22,38 @@ a2vm/
 ├── Cargo.toml              # Workspace root
 ├── a2vm-core/              # Rust core library
 │   ├── src/
-│   │   ├── lib.rs          # Exports: audio, bus, cpu, disk, machine, memory, video
+│   │   ├── lib.rs          # Exports: audio, bus, cpu, disk, machine, memory, timing, video
 │   │   ├── audio.rs        # Speaker toggle timestamps -> PCM
 │   │   ├── bus.rs          # Bus trait and utility helpers
 │   │   ├── disk.rs         # Disk II controller
 │   │   ├── machine.rs      # AppleII system integration
 │   │   ├── memory.rs       # FlatMemory impl for tests
+│   │   ├── timing.rs       # Shared timing constants (CPU_HZ)
 │   │   ├── video.rs        # TEXT/GR/HGR renderer
 │   │   └── cpu/            # 6502 implementation
 │   │       ├── mod.rs
 │   │       ├── opcodes.rs
 │   │       ├── addressing.rs
-│   │       └── status.rs
+│   │       ├── disasm.rs
+│   │       ├── status.rs
+│   │       └── tests.rs
 │   └── tests/
 │       └── klaus_dormann.rs
 ├── a2vm-tui/               # Terminal frontend
-│   └── src/main.rs
+│   └── src/
+│       ├── main.rs
+│       └── cli.rs
 ├── a2vm-gui/               # Graphical frontend
-│   ├── Cargo.toml
-│   └── src/main.rs
+│   └── src/
+│       ├── main.rs
+│       └── cli.rs
 └── docs/
-    ├── architecture.md
-    ├── milestones.md
-    └── gui-plan.md
+    └── architecture.md
 ```
 
 ## Key Conventions
 
-**CPU-Bus Pattern:** `AppleII` owns both CPU and Bus impl. Use `std::mem::take` to temporarily extract CPU during execution.
+**CPU-Bus Pattern:** `AppleII` owns `Cpu` and `BusState` directly. CPU executes against mutable bus without temporary extraction patterns.
 
 **ROM Support:** Only Apple II / Apple II+ ROM sizes are accepted: 12K (`0x3000`) and 20K (`0x5000`).
 
@@ -58,7 +63,7 @@ a2vm/
 - `$C050-$C057`: display mode control
 - `$C0E0-$C0EF`: Disk II controller
 
-**Audio Path:** `machine.rs` records speaker toggles at `$C030`; `audio.rs` converts cycle-timestamped toggles into PCM via `render_until`; `a2vm-tui` plays samples with `rodio`.
+**Audio Path:** `machine.rs` records speaker toggles at `$C030`; `audio.rs` converts cycle-timestamped toggles into PCM; frontends consume via `take_audio_samples_into` and play with `rodio` when enabled.
 
 ## 6502 Traps (NMOS)
 

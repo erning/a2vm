@@ -12,6 +12,7 @@ An Apple II/II+ emulator written in Rust featuring both terminal (TUI) and graph
   - **TUI**: Terminal UI with Braille characters (140×48) using ratatui
   - **GUI**: Native GPU-accelerated window with authentic Apple II colors plus monochrome CRT modes (`color`, `mono`, `mono-scanlines`)
 - **Keyboard Input**: Full ASCII keyboard support with Apple II key mapping
+- **Clap-based CLI**: `--rom` with `A2VM_ROM` fallback, plus validated disk options
 - **ROM Support**: Loads Apple II/II+ ROM files (12K/20K)
 
 ## Quick Start
@@ -66,7 +67,7 @@ Shared options:
 a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
 
 Options:
-  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
+  --rom <file>        Apple II/II+ ROM file (12K or 20K) [env: A2VM_ROM]
   --disk <file>       .dsk disk image (143360 bytes)
   --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap for instant sector reads
   -h, --help          Show this help
@@ -101,9 +102,13 @@ Both frontends use the same keyboard controls:
 ```
 a2vm/
 ├── a2vm-core/     # Rust core library (CPU, memory, video, audio)
+│   └── src/timing.rs   # Shared timing constants (CPU_HZ)
 ├── a2vm-tui/      # Terminal UI frontend (Braille display)
+│   └── src/cli.rs      # TUI clap CLI definition
 ├── a2vm-gui/      # Graphical UI frontend (pixels + winit)
-└── docs/          # Documentation (architecture, milestones, GUI plan)
+│   └── src/cli.rs      # GUI clap CLI definition
+└── docs/          # Documentation
+    └── architecture.md
 ```
 
 ## Testing
