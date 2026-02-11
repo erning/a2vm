@@ -354,6 +354,7 @@ fn map_winit_key(event: &KeyEvent, ctrl: bool) -> Option<u8> {
             NamedKey::Enter => Some(0x0D),
             NamedKey::Backspace => Some(0x08),
             NamedKey::Delete => Some(0x7F),
+            NamedKey::Space => Some(0x20),
             NamedKey::ArrowLeft => Some(0x08),
             NamedKey::ArrowRight => Some(0x15),
             NamedKey::ArrowUp => Some(0x0B),
