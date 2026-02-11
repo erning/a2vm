@@ -139,7 +139,7 @@
 | 非法操作码完整支持 | ✅ 完成 | 已实现 8 个常用非法操作码：LAX/SAX/DCP/ISC/SLO/RLA/RRA/SRE |
 | 磁盘写入完整链路 | ✅ 完成 | 已实现 nibble/raw 双向同步：`sync_nibble_to_raw()` 支持将 nibblized track 解码回 raw sectors 并持久化到文件 |
 | 音频缓冲复用落地 | ✅ 完成 | TUI 和 GUI 已迁移使用 `take_audio_samples_into()` 复用缓冲区 |
-| Cpu pub 字段封装 | 低 | 当前可用但封装性仍可提升 |
+| Cpu pub 字段封装 | ✅ 完成 | 所有字段已私有化，提供 getter/setter 方法访问，性能无损（#[inline(always)]） |
 
 ### 未来候选功能
 

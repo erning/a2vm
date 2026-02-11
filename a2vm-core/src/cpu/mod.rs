@@ -12,15 +12,116 @@ use opcodes::{Mnemonic, OPCODES};
 use status::{Status, C, D, I, N, V, Z};
 
 pub struct Cpu {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
-    pub sp: u8,
-    pub pc: u16,
-    pub p: Status,
-    pub cycles: u64,
-    pub irq_pending: bool,
-    pub nmi_pending: bool,
+    a: u8,
+    x: u8,
+    y: u8,
+    sp: u8,
+    pc: u16,
+    p: Status,
+    cycles: u64,
+    irq_pending: bool,
+    nmi_pending: bool,
+}
+
+impl Cpu {
+    #[inline(always)]
+    pub fn a(&self) -> u8 {
+        self.a
+    }
+
+    #[inline(always)]
+    pub fn x(&self) -> u8 {
+        self.x
+    }
+
+    #[inline(always)]
+    pub fn y(&self) -> u8 {
+        self.y
+    }
+
+    #[inline(always)]
+    pub fn sp(&self) -> u8 {
+        self.sp
+    }
+
+    #[inline(always)]
+    pub fn pc(&self) -> u16 {
+        self.pc
+    }
+
+    #[inline(always)]
+    pub fn p(&self) -> Status {
+        self.p
+    }
+
+    #[inline(always)]
+    pub fn cycles(&self) -> u64 {
+        self.cycles
+    }
+
+    #[inline(always)]
+    pub fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    #[inline(always)]
+    pub fn nmi_pending(&self) -> bool {
+        self.nmi_pending
+    }
+}
+
+impl Cpu {
+    #[inline(always)]
+    pub fn set_a(&mut self, val: u8) {
+        self.a = val;
+    }
+
+    #[inline(always)]
+    pub fn set_x(&mut self, val: u8) {
+        self.x = val;
+    }
+
+    #[inline(always)]
+    pub fn set_y(&mut self, val: u8) {
+        self.y = val;
+    }
+
+    #[inline(always)]
+    pub fn set_sp(&mut self, val: u8) {
+        self.sp = val;
+    }
+
+    #[inline(always)]
+    pub fn set_pc(&mut self, val: u16) {
+        self.pc = val;
+    }
+
+    #[inline(always)]
+    pub fn set_p(&mut self, val: Status) {
+        self.p = val;
+    }
+
+    #[inline(always)]
+    pub fn set_irq_pending(&mut self, val: bool) {
+        self.irq_pending = val;
+    }
+
+    #[inline(always)]
+    pub fn set_nmi_pending(&mut self, val: bool) {
+        self.nmi_pending = val;
+    }
+
+    #[inline(always)]
+    pub fn set_flag(&mut self, flag: impl FnOnce(&mut Status)) {
+        flag(&mut self.p);
+    }
+
+    /// Set the cycle counter (for testing purposes only).
+    #[cfg(test)]
+    #[inline(always)]
+    pub fn set_cycles(&mut self, val: u64) {
+        self.cycles = val;
+    }
 }
 
 impl Cpu {

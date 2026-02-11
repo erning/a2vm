@@ -257,7 +257,7 @@ fn main() -> io::Result<()> {
     let mut turbo = false;
     let mut emu_mhz: f64 = 0.0;
     let mut perf_last_time = Instant::now();
-    let mut perf_last_cycles = apple.cpu.cycles;
+    let mut perf_last_cycles = apple.cpu.cycles();
 
     // Main loop
     loop {
@@ -333,12 +333,12 @@ fn main() -> io::Result<()> {
         let perf_now = Instant::now();
         let perf_elapsed = perf_now.saturating_duration_since(perf_last_time);
         if perf_elapsed >= perf_sample_interval {
-            let delta_cycles = apple.cpu.cycles.saturating_sub(perf_last_cycles);
+            let delta_cycles = apple.cpu.cycles().saturating_sub(perf_last_cycles);
             let secs = perf_elapsed.as_secs_f64();
             if secs > 0.0 {
                 emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
             }
-            perf_last_cycles = apple.cpu.cycles;
+            perf_last_cycles = apple.cpu.cycles();
             perf_last_time = perf_now;
         }
 
@@ -401,12 +401,12 @@ fn main() -> io::Result<()> {
                     let fast_label = if apple.is_fast_disk() { " FAST" } else { "" };
                     let status = format!(
                         " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{} EMU:{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
-                        cpu.pc,
-                        cpu.a,
-                        cpu.x,
-                        cpu.y,
-                        cpu.sp,
-                        cpu.p.0,
+                        cpu.pc(),
+                        cpu.a(),
+                        cpu.x(),
+                        cpu.y(),
+                        cpu.sp(),
+                        cpu.p().0,
                         mode,
                         disk_status,
                         fast_label,

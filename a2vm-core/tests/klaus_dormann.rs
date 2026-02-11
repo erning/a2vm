@@ -12,15 +12,15 @@ fn klaus_dormann_functional_test() {
     mem.data[..bin.len()].copy_from_slice(bin);
 
     let mut cpu = Cpu::new();
-    cpu.pc = 0x0400;
+    cpu.set_pc(0x0400);
 
-    let mut prev_pc = cpu.pc;
+    let mut prev_pc = cpu.pc();
     let mut same_pc_count = 0u32;
 
     loop {
         cpu.step(&mut mem);
 
-        if cpu.pc == prev_pc {
+        if cpu.pc() == prev_pc {
             same_pc_count += 1;
             if same_pc_count > 2 {
                 // CPU is stuck in a trap (tight loop to self)
@@ -28,25 +28,28 @@ fn klaus_dormann_functional_test() {
             }
         } else {
             same_pc_count = 0;
-            prev_pc = cpu.pc;
+            prev_pc = cpu.pc();
         }
 
-        if cpu.cycles > MAX_CYCLES {
+        if cpu.cycles() > MAX_CYCLES {
             panic!(
                 "Test did not complete within {} cycles. PC={:#06X}",
-                MAX_CYCLES, cpu.pc
+                MAX_CYCLES,
+                cpu.pc()
             );
         }
     }
 
     assert_eq!(
-        cpu.pc, SUCCESS_TRAP,
+        cpu.pc(),
+        SUCCESS_TRAP,
         "Test FAILED: trapped at PC={:#06X}, expected success trap at {:#06X}",
-        cpu.pc, SUCCESS_TRAP
+        cpu.pc(),
+        SUCCESS_TRAP
     );
 
     eprintln!(
         "Klaus Dormann 6502 functional test PASSED! Cycles: {}",
-        cpu.cycles
+        cpu.cycles()
     );
 }

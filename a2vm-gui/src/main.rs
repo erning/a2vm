@@ -283,12 +283,12 @@ impl App {
         let perf_now = Instant::now();
         let perf_elapsed = perf_now.saturating_duration_since(self.perf_last_time);
         if perf_elapsed >= PERF_SAMPLE_INTERVAL {
-            let delta_cycles = self.apple.cpu.cycles.saturating_sub(self.perf_last_cycles);
+            let delta_cycles = self.apple.cpu.cycles().saturating_sub(self.perf_last_cycles);
             let secs = perf_elapsed.as_secs_f64();
             if secs > 0.0 {
                 self.emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
             }
-            self.perf_last_cycles = self.apple.cpu.cycles;
+            self.perf_last_cycles = self.apple.cpu.cycles();
             self.perf_last_time = perf_now;
 
             let cpu = &self.apple.cpu;
@@ -312,11 +312,11 @@ impl App {
             };
             eprint!(
                 "\rPC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
-                cpu.pc,
-                cpu.a,
-                cpu.x,
-                cpu.y,
-                cpu.sp,
+                cpu.pc(),
+                cpu.a(),
+                cpu.x(),
+                cpu.y(),
+                cpu.sp(),
                 mode,
                 disk_status,
                 turbo_label,

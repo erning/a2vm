@@ -82,13 +82,13 @@ impl AppleII {
         let mut cpu = mem::take(&mut self.cpu);
         cpu.reset(self);
         self.cpu = cpu;
-        self.speaker.reset(self.cpu.cycles);
+        self.speaker.reset(self.cpu.cycles());
     }
 
     /// Execute one CPU instruction. Returns cycles consumed.
     pub fn step(&mut self) -> u32 {
         // Check for RWTS trap before executing the instruction
-        if self.fast_disk && self.cpu.pc == 0xB7B5 {
+        if self.fast_disk && self.cpu.pc() == 0xB7B5 {
             if let Some(cycles) = self.try_rwts_trap() {
                 return cycles;
             }
@@ -111,9 +111,9 @@ impl AppleII {
             };
             // Use run_until so the CPU runs at full speed in a tight loop,
             // breaking only when PC hits the RWTS entry point.
-            let start = self.cpu.cycles;
-            while self.cpu.cycles - start < effective {
-                let remaining = effective - (self.cpu.cycles - start);
+            let start = self.cpu.cycles();
+            while self.cpu.cycles() - start < effective {
+                let remaining = effective - (self.cpu.cycles() - start);
                 let mut cpu = mem::take(&mut self.cpu);
                 let ran = cpu.run_until(self, remaining, 0xB7B5);
                 self.cpu = cpu;
@@ -121,7 +121,7 @@ impl AppleII {
                     self.disk.tick(ran.min(u32::MAX as u64) as u32);
                 }
 
-                if self.cpu.pc == 0xB7B5 && self.try_rwts_trap().is_none() {
+                if self.cpu.pc() == 0xB7B5 && self.try_rwts_trap().is_none() {
                     // Not trappable (e.g. write), step past normally
                     let mut cpu = mem::take(&mut self.cpu);
                     let cycles = cpu.step(self);
@@ -129,7 +129,7 @@ impl AppleII {
                     self.disk.tick(cycles);
                 }
             }
-            self.cpu.cycles - start
+            self.cpu.cycles() - start
         } else {
             let mut cpu = mem::take(&mut self.cpu);
             let cycles = cpu.run(self, target);
@@ -186,11 +186,11 @@ impl AppleII {
             .speaker
             .position()
             .saturating_add(real_cycles)
-            .min(self.cpu.cycles);
+            .min(self.cpu.cycles());
         self.speaker
             .render_until_into(render_target, sample_rate, out);
         // Fast-forward past any accelerated cycles
-        self.speaker.skip_to(self.cpu.cycles);
+        self.speaker.skip_to(self.cpu.cycles());
     }
 
     pub fn take_audio_samples(&mut self, sample_rate: u32, real_cycles: u64) -> Vec<f32> {
@@ -205,7 +205,7 @@ impl AppleII {
     /// Returns `Some(cycles)` if the trap handled the call, `None` to fall through.
     fn try_rwts_trap(&mut self) -> Option<u32> {
         // IOB pointer from A (lo) and Y (hi)
-        let iob_addr = self.cpu.a as u16 | ((self.cpu.y as u16) << 8);
+        let iob_addr = self.cpu.a() as u16 | ((self.cpu.y() as u16) << 8);
 
         // Read IOB fields via peek (no side effects)
         let command = self.peek(iob_addr.wrapping_add(0x0C));
@@ -224,7 +224,7 @@ impl AppleII {
                 // Clear error code in IOB
                 self.write(iob_addr.wrapping_add(0x0D), 0);
                 // Clear carry (success) and simulate RTS
-                self.cpu.p.set(C, false);
+                self.cpu.set_flag(|p| p.set(C, false));
                 self.simulate_rts();
                 Some(50)
             }
@@ -239,7 +239,7 @@ impl AppleII {
                     // Clear error code in IOB
                     self.write(iob_addr.wrapping_add(0x0D), 0);
                     // Clear carry (success) and simulate RTS
-                    self.cpu.p.set(C, false);
+                    self.cpu.set_flag(|p| p.set(C, false));
                     self.simulate_rts();
                     Some(100)
                 } else {
@@ -256,11 +256,11 @@ impl AppleII {
                     Ok(()) => {
                         self.disk.half_track = track * 2;
                         self.write(iob_addr.wrapping_add(0x0D), 0);
-                        self.cpu.p.set(C, false);
+                        self.cpu.set_flag(|p| p.set(C, false));
                     }
                     Err(_) => {
                         self.write(iob_addr.wrapping_add(0x0D), 0x27);
-                        self.cpu.p.set(C, true);
+                        self.cpu.set_flag(|p| p.set(C, true));
                     }
                 }
 
@@ -273,11 +273,12 @@ impl AppleII {
 
     /// Simulate an RTS by pulling the return address from the stack.
     fn simulate_rts(&mut self) {
-        let sp = self.cpu.sp;
+        let sp = self.cpu.sp();
         let lo = self.peek(0x0100 | sp.wrapping_add(1) as u16);
         let hi = self.peek(0x0100 | sp.wrapping_add(2) as u16);
-        self.cpu.sp = sp.wrapping_add(2);
-        self.cpu.pc = (u16::from(hi) << 8 | u16::from(lo)).wrapping_add(1);
+        self.cpu.set_sp(sp.wrapping_add(2));
+        self.cpu
+            .set_pc((u16::from(hi) << 8 | u16::from(lo)).wrapping_add(1));
     }
 
     /// Handle display mode soft switches $C050-$C057 (shared by read and write).
@@ -476,7 +477,7 @@ mod tests {
         }
 
         let total_cycles = 200 * half_period;
-        apple.cpu.cycles = total_cycles;
+        apple.cpu.set_cycles(total_cycles);
 
         let pcm = apple.take_audio_samples(44_100, total_cycles);
         assert!(!pcm.is_empty());
@@ -517,7 +518,7 @@ mod tests {
         apple.reset();
         apple.run_cycles(1_000_000);
 
-        assert!(!(0xC600..=0xC6FF).contains(&apple.cpu.pc));
+        assert!(!(0xC600..=0xC6FF).contains(&apple.cpu.pc()));
     }
 
     #[test]
@@ -537,13 +538,13 @@ mod tests {
         apple.reset();
 
         for _ in 0..1_000_000 {
-            if apple.cpu.pc == 0x0801 {
+            if apple.cpu.pc() == 0x0801 {
                 break;
             }
             apple.step();
         }
 
-        assert_eq!(apple.cpu.pc, 0x0801);
+        assert_eq!(apple.cpu.pc(), 0x0801);
 
         for (i, expected) in sector0.iter().copied().enumerate() {
             let actual = apple.peek(0x0800 + i as u16);
@@ -576,7 +577,7 @@ mod tests {
         assert!(
             max_track >= 2,
             "pc={:04X} track={} max_track={} motor={} 0400={:02X} 0427={:02X} 07D0={:02X}",
-            apple.cpu.pc,
+            apple.cpu.pc(),
             apple.disk.half_track / 2,
             max_track,
             apple.disk.motor_on,
@@ -618,17 +619,17 @@ mod tests {
         apple.write(iob.wrapping_add(0x0C), 0x03);
         apple.write(iob.wrapping_add(0x0D), 0xFF);
 
-        apple.cpu.a = (iob & 0xFF) as u8;
-        apple.cpu.y = (iob >> 8) as u8;
-        apple.cpu.sp = 0xFD;
+        apple.cpu.set_a((iob & 0xFF) as u8);
+        apple.cpu.set_y((iob >> 8) as u8);
+        apple.cpu.set_sp(0xFD);
         apple.write(0x01FE, 0x34);
         apple.write(0x01FF, 0x12);
 
         let trap_cycles = apple.try_rwts_trap();
         assert_eq!(trap_cycles, Some(140));
         assert_eq!(apple.peek(iob.wrapping_add(0x0D)), 0x00);
-        assert!(!apple.cpu.p.get(C));
-        assert_eq!(apple.cpu.pc, 0x1235);
+        assert!(!apple.cpu.p().get(C));
+        assert_eq!(apple.cpu.pc(), 0x1235);
 
         let sector = apple.disk.read_sector_raw(0, 0, 0).unwrap();
         for (i, &actual) in sector.iter().enumerate() {
