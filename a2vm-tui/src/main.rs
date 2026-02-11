@@ -15,6 +15,7 @@ use rodio::buffer::SamplesBuffer;
 #[cfg(feature = "audio")]
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
+use a2vm_core::keyboard::{map_apple_key, AppleKey};
 use a2vm_core::machine::AppleII;
 use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, BITMAP_HEIGHT, BITMAP_SIZE, BITMAP_STRIDE, BITMAP_WIDTH};
@@ -102,31 +103,18 @@ fn map_key(key: KeyEvent) -> Option<u8> {
 
     match key.code {
         KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+A..Z → $01..$1A
-            let ctrl = (c.to_ascii_uppercase() as u8).wrapping_sub(b'@');
-            if (1..=26).contains(&ctrl) {
-                Some(ctrl)
-            } else {
-                None
-            }
+            map_apple_key(AppleKey::Control(c))
         }
-        KeyCode::Char(c) => {
-            let mut ascii = c as u8;
-            // Apple II only has uppercase; convert lowercase
-            if ascii.is_ascii_lowercase() {
-                ascii -= 0x20;
-            }
-            Some(ascii)
-        }
-        KeyCode::Enter => Some(0x0D),
-        KeyCode::Backspace => Some(0x08), // left arrow (delete)
-        KeyCode::Delete => Some(0x7F),
-        KeyCode::Left => Some(0x08),
-        KeyCode::Right => Some(0x15),
-        KeyCode::Up => Some(0x0B),
-        KeyCode::Down => Some(0x0A),
-        KeyCode::Esc => Some(0x1B),
-        KeyCode::Tab => Some(0x09),
+        KeyCode::Char(c) => map_apple_key(AppleKey::Printable(c)),
+        KeyCode::Enter => map_apple_key(AppleKey::Enter),
+        KeyCode::Backspace => map_apple_key(AppleKey::Backspace),
+        KeyCode::Delete => map_apple_key(AppleKey::Delete),
+        KeyCode::Left => map_apple_key(AppleKey::Left),
+        KeyCode::Right => map_apple_key(AppleKey::Right),
+        KeyCode::Up => map_apple_key(AppleKey::Up),
+        KeyCode::Down => map_apple_key(AppleKey::Down),
+        KeyCode::Esc => map_apple_key(AppleKey::Escape),
+        KeyCode::Tab => map_apple_key(AppleKey::Tab),
         _ => None,
     }
 }

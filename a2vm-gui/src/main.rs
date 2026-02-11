@@ -14,6 +14,7 @@ use rodio::buffer::SamplesBuffer;
 #[cfg(feature = "audio")]
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
+use a2vm_core::keyboard::{map_apple_key, AppleKey};
 use a2vm_core::machine::AppleII;
 use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
@@ -326,13 +327,9 @@ impl Drop for App {
 /// Map a winit key event to Apple II ASCII.
 fn map_winit_key(event: &KeyEvent, ctrl: bool) -> Option<u8> {
     if ctrl {
-        // Ctrl+A..Z → 0x01..0x1A
         if let Key::Character(c) = &event.logical_key {
             let ch = c.chars().next()?;
-            let ctrl_code = (ch.to_ascii_uppercase() as u8).wrapping_sub(b'@');
-            if (1..=26).contains(&ctrl_code) {
-                return Some(ctrl_code);
-            }
+            return map_apple_key(AppleKey::Control(ch));
         }
         return None;
     }
@@ -340,27 +337,19 @@ fn map_winit_key(event: &KeyEvent, ctrl: bool) -> Option<u8> {
     match &event.logical_key {
         Key::Character(c) => {
             let ch = c.chars().next()?;
-            if ch.is_ascii() {
-                let mut ascii = ch as u8;
-                if ascii.is_ascii_lowercase() {
-                    ascii -= 0x20;
-                }
-                Some(ascii)
-            } else {
-                None
-            }
+            map_apple_key(AppleKey::Printable(ch))
         }
         Key::Named(named) => match named {
-            NamedKey::Enter => Some(0x0D),
-            NamedKey::Backspace => Some(0x08),
-            NamedKey::Delete => Some(0x7F),
-            NamedKey::Space => Some(0x20),
-            NamedKey::ArrowLeft => Some(0x08),
-            NamedKey::ArrowRight => Some(0x15),
-            NamedKey::ArrowUp => Some(0x0B),
-            NamedKey::ArrowDown => Some(0x0A),
-            NamedKey::Escape => Some(0x1B),
-            NamedKey::Tab => Some(0x09),
+            NamedKey::Enter => map_apple_key(AppleKey::Enter),
+            NamedKey::Backspace => map_apple_key(AppleKey::Backspace),
+            NamedKey::Delete => map_apple_key(AppleKey::Delete),
+            NamedKey::Space => map_apple_key(AppleKey::Space),
+            NamedKey::ArrowLeft => map_apple_key(AppleKey::Left),
+            NamedKey::ArrowRight => map_apple_key(AppleKey::Right),
+            NamedKey::ArrowUp => map_apple_key(AppleKey::Up),
+            NamedKey::ArrowDown => map_apple_key(AppleKey::Down),
+            NamedKey::Escape => map_apple_key(AppleKey::Escape),
+            NamedKey::Tab => map_apple_key(AppleKey::Tab),
             _ => None,
         },
         _ => None,
