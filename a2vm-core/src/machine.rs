@@ -32,9 +32,9 @@ pub struct BusState {
     ram: [u8; 0xC000], // 48K RAM
     rom: [u8; 0x3000], // 12K ROM ($D000-$FFFF)
     rom_loaded: bool,
-    kbd_latch: u8,           // $C000: keyboard latch (bit 7 = strobe)
-    pub video_dirty: bool,   // Set on writes to video RAM ($0400-$5FFF)
-    display_mode_gen: u8,    // Incremented on display mode switch changes
+    kbd_latch: u8,         // $C000: keyboard latch (bit 7 = strobe)
+    pub video_dirty: bool, // Set on writes to video RAM ($0400-$5FFF)
+    display_mode_gen: u8,  // Incremented on display mode switch changes
 }
 
 impl BusState {
@@ -263,10 +263,14 @@ impl AppleII {
         self.bus.kbd_latch = ascii | 0x80;
     }
 
+    pub fn load_disk_into_drive(&mut self, path: &Path, drive: usize) -> Result<()> {
+        self.bus.disk_controller_enabled = true;
+        self.bus.disk.load_disk(path, drive)
+    }
+
     /// Load a .dsk disk image into drive 1.
     pub fn load_disk(&mut self, path: &Path) -> Result<()> {
-        self.bus.disk_controller_enabled = true;
-        self.bus.disk.load_disk(path, 0)
+        self.load_disk_into_drive(path, 0)
     }
 
     /// Enable or disable Disk II slot-6 mapping.
@@ -387,7 +391,11 @@ impl AppleII {
                     *byte = self.bus.peek(buf_addr.wrapping_add(i as u16));
                 }
 
-                match self.bus.disk.write_sector_raw(drive_idx, track, sector, &data) {
+                match self
+                    .bus
+                    .disk
+                    .write_sector_raw(drive_idx, track, sector, &data)
+                {
                     Ok(()) => {
                         self.bus.disk.half_track = track * 2;
                         self.bus.write(iob_addr.wrapping_add(0x0D), 0);

@@ -32,8 +32,11 @@ cargo build --release -p a2vm-tui --no-default-features
 # Run with a disk image
 ./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 
-# Fast-disk mode (DOS 3.3 RWTS trap for instant sector reads)
-./target/release/a2vm-tui --rom roms/apple2p.rom --fast-disk "disks/Apple DOS 3.3 January 1983.dsk"
+# Fast-disk mode (global switch for all mounted drives)
+./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk
+
+# Mount two disks (drive 1 then drive 2)
+./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk"
 
 # Use A2VM_ROM environment variable to avoid typing --rom every time
 export A2VM_ROM=roms/apple2p.rom
@@ -57,6 +60,9 @@ cargo build --release -p a2vm-gui --no-default-features
 
 # Run with disk
 cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
+
+# Run with two disks + global fast-disk
+cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk" --fast-disk
 ```
 
 ### Command Line Options
@@ -64,12 +70,12 @@ cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 Janu
 Shared options:
 
 ```
-a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
+a2vm-tui|a2vm-gui --rom <file> [--disk <file>]... [--fast-disk]
 
 Options:
   --rom <file>        Apple II/II+ ROM file (12K or 20K) [env: A2VM_ROM]
-  --disk <file>       .dsk disk image (143360 bytes)
-  --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap for instant sector reads
+  --disk <file>       .dsk disk image (143360 bytes), may be passed up to two times
+  --fast-disk         Enable DOS 3.3 RWTS fast path for all mounted drives
   -h, --help          Show this help
 ```
 
@@ -82,8 +88,9 @@ a2vm-gui ... [--color-mode <mode>]
 ```
 
 - `--rom` is required; falls back to the `A2VM_ROM` environment variable
-- `--disk` and `--fast-disk` are mutually exclusive
-- `--fast-disk` traps the DOS 3.3 RWTS entry point (`$B7B5`) and copies sector data directly from the raw `.dsk` image, skipping nibble-level emulation. Only works with DOS 3.3 formatted disks
+- `--disk` can be omitted, provided once, or provided twice (first maps to drive 1, second to drive 2)
+- `--fast-disk` is a global switch that applies to all mounted drives
+- `--fast-disk` traps the DOS 3.3 RWTS entry point (`$B7B5`) and copies sector data directly from raw `.dsk` images, skipping nibble-level emulation. Best used with DOS 3.3 formatted disks
 
 ## Controls
 

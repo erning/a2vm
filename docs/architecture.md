@@ -141,14 +141,14 @@ Typed core error enum for ROM/disk operations.
 
 ### a2vm-tui
 
-- clap-based CLI argument parsing (`--rom`, `--disk`, `--fast-disk`) in `src/cli.rs`
+- clap-based CLI argument parsing (`--rom`, repeatable `--disk` up to two, boolean `--fast-disk`) in `src/cli.rs`
 - terminal rendering through Braille conversion
 - keyboard mapping to Apple II ASCII
 - optional audio playback with rodio
 
 ### a2vm-gui
 
-- clap-based CLI argument parsing (`--rom`, `--disk`, `--fast-disk`, `--color-mode`) in `src/cli.rs`
+- clap-based CLI argument parsing (`--rom`, repeatable `--disk` up to two, boolean `--fast-disk`, `--color-mode`) in `src/cli.rs`
 - native event loop with winit
 - framebuffer presentation with pixels
 - optional audio playback with rodio

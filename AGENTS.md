@@ -95,7 +95,7 @@ cargo build --release -p a2vm-tui --no-default-features
 cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 
 # TUI fast-disk mode
-cargo run -p a2vm-tui -- --rom roms/apple2p.rom --fast-disk "disks/Apple DOS 3.3 January 1983.dsk"
+cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk
 
 # GUI --------------------------------------------------------
 
@@ -117,11 +117,11 @@ cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 Janu
 Shared options:
 
 ```
-a2vm-tui|a2vm-gui --rom <file> [--disk <file> | --fast-disk <file>]
+a2vm-tui|a2vm-gui --rom <file> [--disk <file>]... [--fast-disk]
 
   --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
-  --disk <file>       .dsk disk image (143360 bytes)
-  --fast-disk <file>  .dsk image with DOS 3.3 RWTS trap ($B7B5) for instant reads
+  --disk <file>       .dsk disk image (143360 bytes), repeat up to two times
+  --fast-disk         Enable DOS 3.3 RWTS trap ($B7B5) for all mounted drives
   -h, --help          Show this help
 ```
 
@@ -134,8 +134,9 @@ a2vm-gui ... [--color-mode <mode>]
 ```
 
 - `--rom` required; falls back to `A2VM_ROM` env var
-- `--disk` and `--fast-disk` are mutually exclusive
-- `--fast-disk` only works with DOS 3.3 formatted disks
+- `--disk` can be provided zero, one, or two times (drive 1 then drive 2)
+- `--fast-disk` is a global toggle across mounted drives
+- `--fast-disk` works best with DOS 3.3 formatted disks
 
 ## Testing
 

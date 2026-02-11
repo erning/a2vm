@@ -80,23 +80,22 @@ struct App {
 
 impl App {
     fn new(cli: &CliArgs) -> Self {
-        let disk_file = cli.disk.as_ref().or(cli.fast_disk.as_ref());
         let mut apple = AppleII::new();
         apple.load_rom(&cli.rom).unwrap_or_else(|e| {
             eprintln!("Error loading ROM: {e}");
             std::process::exit(1);
         });
 
-        apple.set_disk_controller_enabled(disk_file.is_some());
+        apple.set_disk_controller_enabled(!cli.disk.is_empty());
 
-        if let Some(disk) = disk_file {
-            apple.load_disk(disk).unwrap_or_else(|e| {
+        for (drive, disk) in cli.disk.iter().enumerate() {
+            apple.load_disk_into_drive(disk, drive).unwrap_or_else(|e| {
                 eprintln!("Error loading disk: {e}");
                 std::process::exit(1);
             });
         }
 
-        if cli.fast_disk.is_some() {
+        if cli.fast_disk {
             apple.set_fast_disk(true);
         }
 
@@ -133,7 +132,7 @@ impl App {
             audio_sink,
             #[cfg(feature = "audio")]
             audio_buffer: Vec::with_capacity(4096),
-            fast_disk: cli.fast_disk.is_some(),
+            fast_disk: cli.fast_disk,
             modifiers: ModifiersState::empty(),
             status_printed: false,
             color_mode: cli.color_mode.into(),

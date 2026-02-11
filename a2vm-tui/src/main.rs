@@ -133,21 +133,19 @@ fn map_key(key: KeyEvent) -> Option<u8> {
 
 fn main() -> io::Result<()> {
     let cli = cli::parse();
-    let fast_disk = cli.fast_disk.is_some();
-    let disk_file = cli.disk.as_ref().or(cli.fast_disk.as_ref());
 
     // Create Apple II and load ROM
     let mut apple = AppleII::new();
     apple.load_rom(&cli.rom)?;
 
     // Expose Disk II controller only when a disk image is provided.
-    apple.set_disk_controller_enabled(disk_file.is_some());
+    apple.set_disk_controller_enabled(!cli.disk.is_empty());
 
-    if let Some(disk) = disk_file {
-        apple.load_disk(disk)?;
+    for (drive, disk) in cli.disk.iter().enumerate() {
+        apple.load_disk_into_drive(disk, drive)?;
     }
 
-    if fast_disk {
+    if cli.fast_disk {
         apple.set_fast_disk(true);
     }
 

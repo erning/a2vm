@@ -126,6 +126,13 @@ impl DiskII {
 
     /// Load a .dsk image into a drive (0 or 1).
     pub fn load_disk(&mut self, path: &Path, drive: usize) -> Result<()> {
+        if drive >= 2 {
+            return Err(Error::InvalidDiskLocation {
+                drive,
+                track: 0,
+                sector: 0,
+            });
+        }
         let data = std::fs::read(path)?;
         if data.len() != DSK_SIZE {
             return Err(Error::InvalidDiskSize {
