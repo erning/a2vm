@@ -5,4 +5,5 @@ pub mod disk;
 pub mod error;
 pub mod machine;
 pub mod memory;
+pub mod timing;
 pub mod video;

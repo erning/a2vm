@@ -9,6 +9,7 @@ audio = ["dep:rodio"]
 
 [dependencies]
 a2vm-core = { path = "../a2vm-core" }
+clap = { version = "4.5", features = ["derive", "env"] }
 ratatui = "0.30"
 crossterm = "0.29"
 rodio = { version = "0.21", optional = true }

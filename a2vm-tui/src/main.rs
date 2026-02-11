@@ -1,5 +1,4 @@
 use std::io;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
@@ -17,10 +16,10 @@ use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
 use a2vm_core::machine::AppleII;
+use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, BITMAP_HEIGHT, BITMAP_SIZE, BITMAP_STRIDE, BITMAP_WIDTH};
 
-/// Apple II CPU target clock (NTSC), ~1.023 MHz.
-const CPU_HZ: u64 = 1_023_000;
+mod cli;
 
 /// Turbo multiplier when enabled from the TUI.
 const TURBO_MULTIPLIER: u64 = 4;
@@ -133,81 +132,19 @@ fn map_key(key: KeyEvent) -> Option<u8> {
 }
 
 fn main() -> io::Result<()> {
-    // Parse command line options
-    let args: Vec<String> = std::env::args().collect();
-    let mut rom_path_str: Option<String> = None;
-    let mut disk_path_str: Option<String> = None;
-    let mut fast_disk_str: Option<String> = None;
-    let mut show_help = false;
-    let mut error = false;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--help" | "-h" => show_help = true,
-            "--rom" => {
-                i += 1;
-                rom_path_str = args.get(i).cloned();
-            }
-            "--disk" => {
-                i += 1;
-                disk_path_str = args.get(i).cloned();
-            }
-            "--fast-disk" => {
-                i += 1;
-                fast_disk_str = args.get(i).cloned();
-            }
-            other => {
-                eprintln!("Error: unknown option: {other}");
-                error = true;
-            }
-        }
-        i += 1;
-    }
-
-    // --disk and --fast-disk are mutually exclusive
-    if disk_path_str.is_some() && fast_disk_str.is_some() {
-        eprintln!("Error: --disk and --fast-disk are mutually exclusive");
-        error = true;
-    }
-
-    if show_help || error {
-        eprintln!(
-            "Usage: {} --rom <file> [--disk <file> | --fast-disk <file>]",
-            args[0]
-        );
-        eprintln!();
-        eprintln!("Options:");
-        eprintln!("  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]");
-        eprintln!("  --disk <file>       .dsk disk image (143360 bytes)");
-        eprintln!("  --fast-disk <file>  .dsk disk image with DOS 3.3 RWTS trap ($B7B5)");
-        eprintln!("                      for instant sector reads; only for DOS 3.3 disks");
-        eprintln!("  -h, --help          Show this help");
-        std::process::exit(if error { 2 } else { 0 });
-    }
-
-    // Resolve ROM path: --rom > $A2VM_ROM
-    let rom_path_str = rom_path_str
-        .or_else(|| std::env::var("A2VM_ROM").ok())
-        .unwrap_or_else(|| {
-            eprintln!("Error: ROM not specified; use --rom <file> or set A2VM_ROM");
-            std::process::exit(2);
-        });
-    let rom_path = Path::new(&rom_path_str);
-
-    // Resolve disk: --disk or --fast-disk
-    let fast_disk = fast_disk_str.is_some();
-    let disk_file = disk_path_str.or(fast_disk_str);
+    let cli = cli::parse();
+    let fast_disk = cli.fast_disk.is_some();
+    let disk_file = cli.disk.as_ref().or(cli.fast_disk.as_ref());
 
     // Create Apple II and load ROM
     let mut apple = AppleII::new();
-    apple.load_rom(rom_path)?;
+    apple.load_rom(&cli.rom)?;
 
     // Expose Disk II controller only when a disk image is provided.
     apple.set_disk_controller_enabled(disk_file.is_some());
 
-    if let Some(ref disk) = disk_file {
-        apple.load_disk(Path::new(disk))?;
+    if let Some(disk) = disk_file {
+        apple.load_disk(disk)?;
     }
 
     if fast_disk {

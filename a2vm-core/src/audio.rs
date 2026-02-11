@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 
-/// Apple II NTSC master CPU clock used for cycle-to-time conversion.
-pub const CPU_HZ: f64 = 1_023_000.0;
+use crate::timing::CPU_HZ;
 
 /// Speaker toggle timeline -> PCM conversion.
 ///
@@ -74,7 +73,7 @@ impl Speaker {
             return;
         }
 
-        let cycles_per_sample = CPU_HZ / sample_rate as f64;
+        let cycles_per_sample = CPU_HZ as f64 / sample_rate as f64;
         let expected = ((target - self.next_sample_cycle) / cycles_per_sample).ceil() as usize;
         out.reserve(expected);
 
@@ -121,7 +120,7 @@ mod tests {
         let mut sp = Speaker::new();
         let sr = 44_100;
         // ~1 kHz square wave: toggle every half period.
-        let half_period_cycles = (CPU_HZ / 2000.0) as u64;
+        let half_period_cycles = (CPU_HZ as f64 / 2000.0) as u64;
         let end = 100_000u64;
         let mut c = 0u64;
         while c <= end {

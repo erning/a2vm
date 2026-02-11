@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,7 +15,11 @@ use rodio::buffer::SamplesBuffer;
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 
 use a2vm_core::machine::AppleII;
+use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
+
+mod cli;
+use crate::cli::CliArgs;
 
 /// Logical framebuffer: 280 wide × 192 tall (display only, no status bar).
 const FB_WIDTH: u32 = RGBA_WIDTH as u32;
@@ -24,9 +27,6 @@ const FB_HEIGHT: u32 = RGBA_HEIGHT as u32; // 192
 
 /// Default window scale.
 const SCALE: u32 = 3;
-
-/// Apple II CPU target clock (NTSC), ~1.023 MHz.
-const CPU_HZ: u64 = 1_023_000;
 
 /// Turbo multiplier.
 const TURBO_MULTIPLIER: u64 = 4;
@@ -43,106 +43,6 @@ const PERF_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 /// PCM output sample rate.
 #[cfg(feature = "audio")]
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
-
-// ── CLI parsing ─────────────────────────────────────────────────────
-
-struct CliArgs {
-    rom_path: String,
-    disk_file: Option<String>,
-    fast_disk: bool,
-    color_mode: DisplayColorMode,
-}
-
-fn parse_args() -> CliArgs {
-    let args: Vec<String> = std::env::args().collect();
-    let mut rom_path_str: Option<String> = None;
-    let mut disk_path_str: Option<String> = None;
-    let mut fast_disk_str: Option<String> = None;
-    let mut color_mode_str: Option<String> = None;
-    let mut show_help = false;
-    let mut error = false;
-
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--help" | "-h" => show_help = true,
-            "--rom" => {
-                i += 1;
-                rom_path_str = args.get(i).cloned();
-            }
-            "--disk" => {
-                i += 1;
-                disk_path_str = args.get(i).cloned();
-            }
-            "--fast-disk" => {
-                i += 1;
-                fast_disk_str = args.get(i).cloned();
-            }
-            "--color-mode" => {
-                i += 1;
-                color_mode_str = args.get(i).cloned();
-            }
-            other => {
-                eprintln!("Error: unknown option: {other}");
-                error = true;
-            }
-        }
-        i += 1;
-    }
-
-    if disk_path_str.is_some() && fast_disk_str.is_some() {
-        eprintln!("Error: --disk and --fast-disk are mutually exclusive");
-        error = true;
-    }
-
-    let color_mode = match color_mode_str.as_deref() {
-        Some("color") | None => DisplayColorMode::Color,
-        Some("mono") => DisplayColorMode::Monochrome,
-        Some("mono-scanlines") => DisplayColorMode::MonochromeScanlines,
-        Some(other) => {
-            eprintln!(
-                "Error: invalid color mode '{other}'; use 'color', 'mono', or 'mono-scanlines'"
-            );
-            error = true;
-            DisplayColorMode::Color
-        }
-    };
-
-    if show_help || error {
-        eprintln!(
-            "Usage: {} --rom <file> [--disk <file> | --fast-disk <file>] [--color-mode <mode>]",
-            args[0]
-        );
-        eprintln!();
-        eprintln!("Options:");
-        eprintln!("  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]");
-        eprintln!("  --disk <file>       .dsk disk image (143360 bytes)");
-        eprintln!("  --fast-disk <file>  .dsk disk image with DOS 3.3 RWTS trap ($B7B5)");
-        eprintln!("                      for instant sector reads; only for DOS 3.3 disks");
-        eprintln!(
-            "  --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'"
-        );
-        eprintln!("  -h, --help          Show this help");
-        std::process::exit(if error { 2 } else { 0 });
-    }
-
-    let rom_path = rom_path_str
-        .or_else(|| std::env::var("A2VM_ROM").ok())
-        .unwrap_or_else(|| {
-            eprintln!("Error: ROM not specified; use --rom <file> or set A2VM_ROM");
-            std::process::exit(2);
-        });
-
-    let fast_disk = fast_disk_str.is_some();
-    let disk_file = disk_path_str.or(fast_disk_str);
-
-    CliArgs {
-        rom_path,
-        disk_file,
-        fast_disk,
-        color_mode,
-    }
-}
 
 // ── App ─────────────────────────────────────────────────────────────
 
@@ -180,24 +80,23 @@ struct App {
 
 impl App {
     fn new(cli: &CliArgs) -> Self {
+        let disk_file = cli.disk.as_ref().or(cli.fast_disk.as_ref());
         let mut apple = AppleII::new();
-        apple
-            .load_rom(Path::new(&cli.rom_path))
-            .unwrap_or_else(|e| {
-                eprintln!("Error loading ROM: {e}");
-                std::process::exit(1);
-            });
+        apple.load_rom(&cli.rom).unwrap_or_else(|e| {
+            eprintln!("Error loading ROM: {e}");
+            std::process::exit(1);
+        });
 
-        apple.set_disk_controller_enabled(cli.disk_file.is_some());
+        apple.set_disk_controller_enabled(disk_file.is_some());
 
-        if let Some(ref disk) = cli.disk_file {
-            apple.load_disk(Path::new(disk)).unwrap_or_else(|e| {
+        if let Some(disk) = disk_file {
+            apple.load_disk(disk).unwrap_or_else(|e| {
                 eprintln!("Error loading disk: {e}");
                 std::process::exit(1);
             });
         }
 
-        if cli.fast_disk {
+        if cli.fast_disk.is_some() {
             apple.set_fast_disk(true);
         }
 
@@ -234,10 +133,10 @@ impl App {
             audio_sink,
             #[cfg(feature = "audio")]
             audio_buffer: Vec::with_capacity(4096),
-            fast_disk: cli.fast_disk,
+            fast_disk: cli.fast_disk.is_some(),
             modifiers: ModifiersState::empty(),
             status_printed: false,
-            color_mode: cli.color_mode,
+            color_mode: cli.color_mode.into(),
             frame_phase: 0,
         }
     }
@@ -285,7 +184,11 @@ impl App {
         let perf_now = Instant::now();
         let perf_elapsed = perf_now.saturating_duration_since(self.perf_last_time);
         if perf_elapsed >= PERF_SAMPLE_INTERVAL {
-            let delta_cycles = self.apple.cpu.cycles().saturating_sub(self.perf_last_cycles);
+            let delta_cycles = self
+                .apple
+                .cpu
+                .cycles()
+                .saturating_sub(self.perf_last_cycles);
             let secs = perf_elapsed.as_secs_f64();
             if secs > 0.0 {
                 self.emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
@@ -535,7 +438,7 @@ impl ApplicationHandler for App {
 // ── main ────────────────────────────────────────────────────────────
 
 fn main() {
-    let cli = parse_args();
+    let cli = cli::parse();
     let mut app = App::new(&cli);
 
     let event_loop = EventLoop::new().expect("create event loop");
