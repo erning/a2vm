@@ -19,7 +19,7 @@ impl Speaker {
     pub fn new() -> Self {
         Self {
             state: false,
-            toggles: VecDeque::new(),
+            toggles: VecDeque::with_capacity(2048),
             next_sample_cycle: 0.0,
             hp_prev_x: 0.0,
             hp_prev_y: 0.0,

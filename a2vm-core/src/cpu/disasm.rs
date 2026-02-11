@@ -3,7 +3,7 @@ use crate::bus::Bus;
 use super::addressing::AddrMode;
 use super::opcodes::OPCODES;
 
-pub fn disasm(bus: &dyn Bus, pc: u16) -> (String, u8) {
+pub fn disasm(bus: &impl Bus, pc: u16) -> (String, u8) {
     let opcode = bus.peek(pc);
     let info = &OPCODES[opcode as usize];
     let lo = bus.peek(pc.wrapping_add(1));

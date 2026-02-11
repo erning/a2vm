@@ -28,6 +28,20 @@ const WRITE_TABLE: [u8; 64] = [
     0xF7, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
 ];
 
+/// Reverse lookup table for 6-and-2 decoding: maps disk nibble → 6-bit value.
+/// Built from WRITE_TABLE at compile time. Entries not in WRITE_TABLE are 0xFF.
+const REVERSE_TABLE: [u8; 256] = build_reverse_table();
+
+const fn build_reverse_table() -> [u8; 256] {
+    let mut table = [0xFFu8; 256];
+    let mut i = 0;
+    while i < 64 {
+        table[WRITE_TABLE[i] as usize] = i as u8;
+        i += 1;
+    }
+    table
+}
+
 const AUX_BYTES: usize = 86;
 const MAIN_BYTES: usize = 256;
 const TOTAL_NIBBLES: usize = AUX_BYTES + MAIN_BYTES;
@@ -491,18 +505,16 @@ fn decode_nibblized_track(
 }
 
 fn decode_6and2_sector(encoded: &[u8; 343]) -> Option<[u8; 256]> {
-    let mut reverse_table = [0u8; 256];
-    for (i, &val) in WRITE_TABLE.iter().enumerate() {
-        reverse_table[val as usize] = i as u8;
-    }
-
     let mut raw6 = [0u8; MAIN_BYTES];
     let mut raw2 = [0u8; AUX_BYTES];
     let mut last = 0u8;
 
     for idx in 0..AUX_BYTES {
         let code = encoded[idx];
-        let val = *reverse_table.get(code as usize)?;
+        let val = REVERSE_TABLE[code as usize];
+        if val == 0xFF {
+            return None;
+        }
         let dec = val ^ last;
         raw2[AUX_BYTES - 1 - idx] = dec;
         last = dec;
@@ -510,14 +522,20 @@ fn decode_6and2_sector(encoded: &[u8; 343]) -> Option<[u8; 256]> {
 
     for idx in 0..MAIN_BYTES {
         let code = encoded[AUX_BYTES + idx];
-        let val = *reverse_table.get(code as usize)?;
+        let val = REVERSE_TABLE[code as usize];
+        if val == 0xFF {
+            return None;
+        }
         let dec = val ^ last;
         raw6[idx] = dec;
         last = dec;
     }
 
     let checksum_code = encoded[342];
-    let checksum_val = *reverse_table.get(checksum_code as usize)?;
+    let checksum_val = REVERSE_TABLE[checksum_code as usize];
+    if checksum_val == 0xFF {
+        return None;
+    }
     let checksum = checksum_val ^ last;
     if checksum != 0 {
         return None;

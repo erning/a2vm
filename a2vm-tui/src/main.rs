@@ -41,14 +41,20 @@ const PERF_SAMPLE_INTERVAL_MS: u64 = 250;
 #[cfg(feature = "audio")]
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
-/// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
+/// Braille bit position lookup: BRAILLE_BIT[dx][dy] gives the bit index
+/// within the Braille codepoint for pixel offset (dx, dy).
 ///
 /// Each Braille character (U+2800..U+28FF) encodes a 2×4 dot matrix:
-///   dot positions → bit mapping:
-///     (0,0)→0  (1,0)→3
-///     (0,1)→1  (1,1)→4
-///     (0,2)→2  (1,2)→5
-///     (0,3)→6  (1,3)→7
+///   (0,0)→0  (1,0)→3
+///   (0,1)→1  (1,1)→4
+///   (0,2)→2  (1,2)→5
+///   (0,3)→6  (1,3)→7
+const BRAILLE_BIT: [[u8; 4]; 2] = [
+    [0, 1, 2, 6], // dx=0: dy=0..3
+    [3, 4, 5, 7], // dx=1: dy=0..3
+];
+
+/// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
 ///
 /// Result: 140 columns × 48 rows.
 fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
@@ -64,28 +70,16 @@ fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
             let mut bits: u8 = 0;
 
             // Sample the 2×4 pixel block
-            for dy in 0..4u8 {
-                for dx in 0..2u8 {
-                    let x = px + dx as usize;
-                    let y = py + dy as usize;
+            for dy in 0..4usize {
+                for dx in 0..2usize {
+                    let x = px + dx;
+                    let y = py + dy;
                     let byte_idx = y * BITMAP_STRIDE + x / 8;
                     let bit_idx = 7 - (x % 8); // MSB-first
                     let pixel = (bitmap[byte_idx] >> bit_idx) & 1;
 
                     if pixel != 0 {
-                        // Map (dx, dy) to braille bit position
-                        let braille_bit = match (dx, dy) {
-                            (0, 0) => 0,
-                            (0, 1) => 1,
-                            (0, 2) => 2,
-                            (0, 3) => 6,
-                            (1, 0) => 3,
-                            (1, 1) => 4,
-                            (1, 2) => 5,
-                            (1, 3) => 7,
-                            _ => unreachable!(),
-                        };
-                        bits |= 1 << braille_bit;
+                        bits |= 1 << BRAILLE_BIT[dx][dy];
                     }
                 }
             }
@@ -323,7 +317,7 @@ fn main() -> io::Result<()> {
                     sink.append(SamplesBuffer::new(
                         1,
                         AUDIO_SAMPLE_RATE,
-                        audio_buffer.clone(),
+                        std::mem::take(&mut audio_buffer),
                     ));
                 }
             }
@@ -350,7 +344,7 @@ fn main() -> io::Result<()> {
         };
         if Instant::now().saturating_duration_since(last_render_time) >= render_interval {
             let flash_on = ((boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
-            video::render(apple.ram(), &apple.display, flash_on, &mut bitmap);
+            video::render(apple.ram(), &apple.bus.display, flash_on, &mut bitmap);
 
             if !braille_initialized || bitmap != last_bitmap {
                 braille_lines = bitmap_to_braille(&bitmap);
@@ -386,15 +380,15 @@ fn main() -> io::Result<()> {
                 let status_y = display_rect.y + display_rect.height;
                 if status_y < area.y + area.height {
                     let cpu = &apple.cpu;
-                    let mode = if apple.display.text {
+                    let mode = if apple.bus.display.text {
                         "TEXT"
-                    } else if apple.display.hires {
+                    } else if apple.bus.display.hires {
                         "HGR"
                     } else {
                         "GR"
                     };
-                    let disk_status = if apple.disk.motor_on {
-                        format!("D:T{}", apple.disk.half_track / 2)
+                    let disk_status = if apple.bus.disk.motor_on {
+                        format!("D:T{}", apple.bus.disk.half_track / 2)
                     } else {
                         "D:--".to_string()
                     };

@@ -160,6 +160,7 @@ struct App {
     perf_last_time: Instant,
     perf_last_cycles: u64,
     flash_on: bool,
+    last_flash_on: bool,
 
     // Audio
     #[cfg(feature = "audio")]
@@ -226,6 +227,7 @@ impl App {
             perf_last_time: now,
             perf_last_cycles: 0,
             flash_on: false,
+            last_flash_on: false,
             #[cfg(feature = "audio")]
             _audio_stream: audio_stream,
             #[cfg(feature = "audio")]
@@ -274,7 +276,7 @@ impl App {
                     sink.append(SamplesBuffer::new(
                         1,
                         AUDIO_SAMPLE_RATE,
-                        self.audio_buffer.clone(),
+                        std::mem::take(&mut self.audio_buffer),
                     ));
                 }
             }
@@ -292,15 +294,15 @@ impl App {
             self.perf_last_time = perf_now;
 
             let cpu = &self.apple.cpu;
-            let mode = if self.apple.display.text {
+            let mode = if self.apple.bus.display.text {
                 "TEXT"
-            } else if self.apple.display.hires {
+            } else if self.apple.bus.display.hires {
                 "HGR"
             } else {
                 "GR"
             };
-            let disk_status = if self.apple.disk.motor_on {
-                format!("D:T{}", self.apple.disk.half_track / 2)
+            let disk_status = if self.apple.bus.disk.motor_on {
+                format!("D:T{}", self.apple.bus.disk.half_track / 2)
             } else {
                 "D:--".to_string()
             };
@@ -331,6 +333,23 @@ impl App {
     }
 
     fn render_frame(&mut self) {
+        // Skip rendering if video RAM and display mode haven't changed
+        // (scanline mode always re-renders due to animation)
+        let dirty = self.apple.bus.video_dirty
+            || self.flash_on != self.last_flash_on
+            || self.color_mode == DisplayColorMode::MonochromeScanlines;
+        if !dirty {
+            // Still need to present the existing frame
+            if let Some(ref pixels) = self.pixels {
+                if let Err(e) = pixels.render() {
+                    eprintln!("render: {e}");
+                }
+            }
+            return;
+        }
+        self.apple.bus.video_dirty = false;
+        self.last_flash_on = self.flash_on;
+
         let pixels = match self.pixels.as_mut() {
             Some(p) => p,
             None => return,
@@ -340,7 +359,7 @@ impl App {
 
         video::render_rgba(
             self.apple.ram(),
-            &self.apple.display,
+            &self.apple.bus.display,
             self.flash_on,
             self.color_mode,
             self.frame_phase,

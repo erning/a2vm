@@ -139,7 +139,7 @@ impl Cpu {
         }
     }
 
-    pub fn reset(&mut self, bus: &mut dyn Bus) {
+    pub fn reset<B: Bus>(&mut self, bus: &mut B) {
         self.a = 0;
         self.x = 0;
         self.y = 0;
@@ -152,7 +152,7 @@ impl Cpu {
     }
 
     /// Execute one instruction, return cycles consumed.
-    pub fn step(&mut self, bus: &mut dyn Bus) -> u32 {
+    pub fn step<B: Bus>(&mut self, bus: &mut B) -> u32 {
         bus.set_cycle(self.cycles);
 
         // Handle interrupts
@@ -181,7 +181,7 @@ impl Cpu {
     }
 
     /// Run for at least `target_cycles` cycles. Returns total cycles executed.
-    pub fn run(&mut self, bus: &mut dyn Bus, target_cycles: u64) -> u64 {
+    pub fn run<B: Bus>(&mut self, bus: &mut B, target_cycles: u64) -> u64 {
         let start = self.cycles;
         while self.cycles - start < target_cycles {
             self.step(bus);
@@ -192,7 +192,7 @@ impl Cpu {
     /// Run until cycle budget is exhausted OR `pc` equals `trap_pc`.
     /// Returns total cycles executed. Caller should check `self.pc == trap_pc`
     /// to distinguish trap hit vs budget exhausted.
-    pub fn run_until(&mut self, bus: &mut dyn Bus, target_cycles: u64, trap_pc: u16) -> u64 {
+    pub fn run_until<B: Bus>(&mut self, bus: &mut B, target_cycles: u64, trap_pc: u16) -> u64 {
         let start = self.cycles;
         while self.cycles - start < target_cycles {
             if self.pc == trap_pc {
@@ -205,13 +205,13 @@ impl Cpu {
 
     // -- Fetch --
 
-    fn fetch(&mut self, bus: &mut dyn Bus) -> u8 {
+    fn fetch<B: Bus>(&mut self, bus: &mut B) -> u8 {
         let val = bus.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
         val
     }
 
-    fn fetch_word(&mut self, bus: &mut dyn Bus) -> u16 {
+    fn fetch_word<B: Bus>(&mut self, bus: &mut B) -> u16 {
         let lo = self.fetch(bus) as u16;
         let hi = self.fetch(bus) as u16;
         (hi << 8) | lo
@@ -219,22 +219,22 @@ impl Cpu {
 
     // -- Stack --
 
-    fn push(&mut self, bus: &mut dyn Bus, val: u8) {
+    fn push<B: Bus>(&mut self, bus: &mut B, val: u8) {
         bus.write(0x0100 | self.sp as u16, val);
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    fn push_word(&mut self, bus: &mut dyn Bus, val: u16) {
+    fn push_word<B: Bus>(&mut self, bus: &mut B, val: u16) {
         self.push(bus, (val >> 8) as u8);
         self.push(bus, val as u8);
     }
 
-    fn pull(&mut self, bus: &mut dyn Bus) -> u8 {
+    fn pull<B: Bus>(&mut self, bus: &mut B) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         bus.read(0x0100 | self.sp as u16)
     }
 
-    fn pull_word(&mut self, bus: &mut dyn Bus) -> u16 {
+    fn pull_word<B: Bus>(&mut self, bus: &mut B) -> u16 {
         let lo = self.pull(bus) as u16;
         let hi = self.pull(bus) as u16;
         (hi << 8) | lo
@@ -242,7 +242,7 @@ impl Cpu {
 
     // -- Addressing mode resolution --
 
-    fn resolve(&mut self, mode: AddrMode, bus: &mut dyn Bus) -> Resolved {
+    fn resolve<B: Bus>(&mut self, mode: AddrMode, bus: &mut B) -> Resolved {
         match mode {
             AddrMode::Implied | AddrMode::Accumulator => Resolved {
                 operand: Operand::None,
@@ -352,7 +352,7 @@ impl Cpu {
 
     // -- Helpers --
 
-    fn read_operand(&self, resolved: &Resolved, bus: &mut dyn Bus) -> u8 {
+    fn read_operand<B: Bus>(&self, resolved: &Resolved, bus: &mut B) -> u8 {
         match resolved.operand {
             Operand::Address(addr) => bus.read(addr),
             _ => {
@@ -373,7 +373,7 @@ impl Cpu {
     // -- Instruction execution --
 
     /// Returns extra cycles beyond the base (e.g., branch taken penalty).
-    fn execute(
+    fn execute<B: Bus>(
         &mut self,
         mnemonic: Mnemonic,
         mode: AddrMode,
@@ -382,7 +382,7 @@ impl Cpu {
         #[cfg(not(debug_assertions))] _opcode: u8,
         #[cfg(not(debug_assertions))] _instr_pc: u16,
         resolved: &Resolved,
-        bus: &mut dyn Bus,
+        bus: &mut B,
     ) -> u32 {
         match mnemonic {
             // -- Load/Store --
@@ -916,7 +916,7 @@ impl Cpu {
 
     // -- Interrupt handlers --
 
-    fn handle_nmi(&mut self, bus: &mut dyn Bus) -> u32 {
+    fn handle_nmi<B: Bus>(&mut self, bus: &mut B) -> u32 {
         self.push_word(bus, self.pc);
         self.push(bus, self.p.to_push_byte(false));
         self.p.set(I, true);
@@ -925,7 +925,7 @@ impl Cpu {
         7
     }
 
-    fn handle_irq(&mut self, bus: &mut dyn Bus) -> u32 {
+    fn handle_irq<B: Bus>(&mut self, bus: &mut B) -> u32 {
         self.push_word(bus, self.pc);
         self.push(bus, self.p.to_push_byte(false));
         self.p.set(I, true);

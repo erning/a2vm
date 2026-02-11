@@ -465,6 +465,9 @@ fn render_lores_rows_rgba(
 }
 
 /// Render hi-res scanlines into RGBA buffer with NTSC artifact color.
+///
+/// Uses a sliding window to track neighbor pixels, avoiding division
+/// by 7 to look up adjacent bytes.
 fn render_hires_scanlines_rgba(
     ram: &[u8],
     rgba: &mut [u8],
@@ -474,6 +477,27 @@ fn render_hires_scanlines_rgba(
 ) {
     for y in 0..num_lines {
         let addr = hgr_line_addr(base, y);
+
+        if color_mode != DisplayColorMode::Color {
+            // Monochrome fast path: no neighbor lookups needed
+            for col in 0..40usize {
+                let byte = ram[addr + col];
+                let pixel_x = col * 7;
+                for bit in 0..7usize {
+                    let color = if byte & (1 << bit) != 0 {
+                        MONO_FG
+                    } else {
+                        MONO_BG
+                    };
+                    let idx = (y * RGBA_WIDTH + pixel_x + bit) * 4;
+                    rgba[idx..idx + 4].copy_from_slice(&color);
+                }
+            }
+            continue;
+        }
+
+        // Color path: use sliding window to avoid division by 7
+        let mut prev_on = false;
         for col in 0..40usize {
             let byte = ram[addr + col];
             let high_bit = byte & 0x80 != 0;
@@ -482,49 +506,35 @@ fn render_hires_scanlines_rgba(
             for bit in 0..7usize {
                 let on = byte & (1 << bit) != 0;
                 let x = pixel_x + bit;
-                let screen_col = x;
 
-                let color: [u8; 4] = if color_mode == DisplayColorMode::Color {
-                    if !on {
-                        HIRES_BLACK
-                    } else {
-                        let prev_on = if x > 0 {
-                            let prev_col = (x - 1) / 7;
-                            let prev_bit = (x - 1) % 7;
-                            ram[addr + prev_col] & (1 << prev_bit) != 0
-                        } else {
-                            false
-                        };
-                        let next_on = if x < 279 {
-                            let next_col = (x + 1) / 7;
-                            let next_bit = (x + 1) % 7;
-                            ram[addr + next_col] & (1 << next_bit) != 0
-                        } else {
-                            false
-                        };
-
-                        if prev_on || next_on {
-                            HIRES_WHITE
-                        } else if high_bit {
-                            if screen_col % 2 == 0 {
-                                HIRES_BLUE
-                            } else {
-                                HIRES_ORANGE
-                            }
-                        } else if screen_col % 2 == 0 {
-                            HIRES_PURPLE
-                        } else {
-                            HIRES_GREEN
-                        }
-                    }
-                } else if on {
-                    MONO_FG
+                // Look ahead for next pixel
+                let next_on = if bit < 6 {
+                    byte & (1 << (bit + 1)) != 0
+                } else if col < 39 {
+                    ram[addr + col + 1] & 1 != 0
                 } else {
-                    MONO_BG
+                    false
+                };
+
+                let color = if !on {
+                    HIRES_BLACK
+                } else if prev_on || next_on {
+                    HIRES_WHITE
+                } else if high_bit {
+                    if x % 2 == 0 {
+                        HIRES_BLUE
+                    } else {
+                        HIRES_ORANGE
+                    }
+                } else if x % 2 == 0 {
+                    HIRES_PURPLE
+                } else {
+                    HIRES_GREEN
                 };
 
                 let idx = (y * RGBA_WIDTH + x) * 4;
                 rgba[idx..idx + 4].copy_from_slice(&color);
+                prev_on = on;
             }
         }
     }
@@ -600,8 +610,15 @@ pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: u
 
 /// Fill entire RGBA buffer with a single color.
 fn fill_rgba(rgba: &mut [u8], color: [u8; 4]) {
-    for pixel in rgba.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&color);
+    let word = u32::from_ne_bytes(color);
+    // Safety: RGBA buffer length is always a multiple of 4
+    let (prefix, aligned, suffix) = unsafe { rgba.align_to_mut::<u32>() };
+    for b in prefix.chunks_exact_mut(4) {
+        b.copy_from_slice(&color);
+    }
+    aligned.fill(word);
+    for b in suffix.chunks_exact_mut(4) {
+        b.copy_from_slice(&color);
     }
 }
 

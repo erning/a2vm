@@ -1,4 +1,3 @@
-use std::mem;
 use std::path::Path;
 
 use crate::audio::Speaker;
@@ -9,9 +8,12 @@ use crate::disk::DiskII;
 use crate::error::{Error, Result};
 use crate::video::DisplayMode;
 
-/// Apple II emulator: CPU + memory + keyboard I/O.
+/// Bus state: RAM, ROM, keyboard, display, disk, speaker.
 ///
-/// Memory map (M2 minimal):
+/// Separated from CPU to allow simultaneous mutable borrows,
+/// eliminating the `mem::take` pattern.
+///
+/// Memory map:
 ///   $0000-$BFFF  48K RAM
 ///   $C000        Keyboard latch (read: last key | bit7=strobe)
 ///   $C010        Keyboard strobe clear (read/write: clears bit 7 of latch)
@@ -20,24 +22,24 @@ use crate::video::DisplayMode;
 ///   $C058-$C0FF  I/O stubs (read: $00)
 ///   $C100-$CFFF  Slot ROM stubs (read: $00)
 ///   $D000-$FFFF  12K ROM
-pub struct AppleII {
-    pub cpu: Cpu,
+pub struct BusState {
     pub display: DisplayMode,
     pub disk: DiskII,
-    speaker: Speaker,
+    pub(crate) speaker: Speaker,
     bus_cycle: u64,
-    disk_controller_enabled: bool,
+    pub(crate) disk_controller_enabled: bool,
     fast_disk: bool,
     ram: [u8; 0xC000], // 48K RAM
     rom: [u8; 0x3000], // 12K ROM ($D000-$FFFF)
     rom_loaded: bool,
-    kbd_latch: u8, // $C000: keyboard latch (bit 7 = strobe)
+    kbd_latch: u8,           // $C000: keyboard latch (bit 7 = strobe)
+    pub video_dirty: bool,   // Set on writes to video RAM ($0400-$5FFF)
+    display_mode_gen: u8,    // Incremented on display mode switch changes
 }
 
-impl AppleII {
-    pub fn new() -> Self {
+impl BusState {
+    fn new() -> Self {
         Self {
-            cpu: Cpu::new(),
             display: DisplayMode::default(),
             disk: DiskII::new(),
             speaker: Speaker::new(),
@@ -48,237 +50,9 @@ impl AppleII {
             rom: [0; 0x3000],
             rom_loaded: false,
             kbd_latch: 0,
+            video_dirty: true,
+            display_mode_gen: 0,
         }
-    }
-
-    /// Load a ROM file into $D000-$FFFF.
-    ///
-    /// Supported sizes:
-    ///   - 12K (12288): $D000-$FFFF directly (Apple II, Apple II+)
-    ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
-    pub fn load_rom(&mut self, path: &Path) -> Result<()> {
-        let data = std::fs::read(path)?;
-        match data.len() {
-            0x3000 => {
-                // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
-                self.rom.copy_from_slice(&data);
-            }
-            0x5000 => {
-                // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
-                self.rom.copy_from_slice(&data[0x2000..]);
-                // Extract Disk II slot 6 ROM at $C600-$C6FF (offset $1600)
-                self.disk.load_slot_rom(&data[0x1600..0x1700]);
-            }
-            _ => {
-                return Err(Error::UnsupportedRomSize { actual: data.len() });
-            }
-        }
-        self.rom_loaded = true;
-        Ok(())
-    }
-
-    /// Reset the CPU: reads the reset vector from $FFFC-$FFFD.
-    pub fn reset(&mut self) {
-        let mut cpu = mem::take(&mut self.cpu);
-        cpu.reset(self);
-        self.cpu = cpu;
-        self.speaker.reset(self.cpu.cycles());
-    }
-
-    /// Execute one CPU instruction. Returns cycles consumed.
-    pub fn step(&mut self) -> u32 {
-        // Check for RWTS trap before executing the instruction
-        if self.fast_disk && self.cpu.pc() == 0xB7B5 {
-            if let Some(cycles) = self.try_rwts_trap() {
-                return cycles;
-            }
-        }
-        let mut cpu = mem::take(&mut self.cpu);
-        let cycles = cpu.step(self);
-        self.cpu = cpu;
-        self.disk.tick(cycles);
-        cycles
-    }
-
-    /// Run the CPU for at least `target` cycles. Returns actual cycles executed.
-    pub fn run_cycles(&mut self, target: u64) -> u64 {
-        if self.fast_disk {
-            // Auto-turbo while disk motor is spinning for fast boot
-            let effective = if self.disk.motor_on {
-                target.saturating_mul(8)
-            } else {
-                target
-            };
-            // Use run_until so the CPU runs at full speed in a tight loop,
-            // breaking only when PC hits the RWTS entry point.
-            let start = self.cpu.cycles();
-            while self.cpu.cycles() - start < effective {
-                let remaining = effective - (self.cpu.cycles() - start);
-                let mut cpu = mem::take(&mut self.cpu);
-                let ran = cpu.run_until(self, remaining, 0xB7B5);
-                self.cpu = cpu;
-                if ran != 0 {
-                    self.disk.tick(ran.min(u32::MAX as u64) as u32);
-                }
-
-                if self.cpu.pc() == 0xB7B5 && self.try_rwts_trap().is_none() {
-                    // Not trappable (e.g. write), step past normally
-                    let mut cpu = mem::take(&mut self.cpu);
-                    let cycles = cpu.step(self);
-                    self.cpu = cpu;
-                    self.disk.tick(cycles);
-                }
-            }
-            self.cpu.cycles() - start
-        } else {
-            let mut cpu = mem::take(&mut self.cpu);
-            let cycles = cpu.run(self, target);
-            self.cpu = cpu;
-            cycles
-        }
-    }
-
-    /// Simulate a key press: sets keyboard latch with strobe bit.
-    /// `ascii` should be the 7-bit ASCII value (e.g., 0x41 for 'A').
-    /// The latch stores `ascii | 0x80` (bit 7 = strobe).
-    pub fn key_press(&mut self, ascii: u8) {
-        self.kbd_latch = ascii | 0x80;
-    }
-
-    /// Load a .dsk disk image into drive 1.
-    pub fn load_disk(&mut self, path: &Path) -> Result<()> {
-        self.disk_controller_enabled = true;
-        self.disk.load_disk(path, 0)
-    }
-
-    /// Enable or disable Disk II slot-6 mapping.
-    pub fn set_disk_controller_enabled(&mut self, enabled: bool) {
-        self.disk_controller_enabled = enabled;
-    }
-
-    /// Enable or disable fast-disk mode (RWTS trap).
-    pub fn set_fast_disk(&mut self, enabled: bool) {
-        self.fast_disk = enabled;
-    }
-
-    /// Returns whether fast-disk mode is active.
-    pub fn is_fast_disk(&self) -> bool {
-        self.fast_disk
-    }
-
-    /// Read-only access to RAM (for video rendering).
-    pub fn ram(&self) -> &[u8] {
-        &self.ram
-    }
-
-    /// Drain synthesized speaker PCM.
-    ///
-    /// `real_cycles` is the wall-clock-equivalent cycle budget (before turbo/
-    /// fast-disk multiplication). Audio is rendered only for this many cycles
-    /// to prevent buffer accumulation during accelerated execution.
-    pub fn take_audio_samples_into(
-        &mut self,
-        sample_rate: u32,
-        real_cycles: u64,
-        out: &mut Vec<f32>,
-    ) {
-        let render_target = self
-            .speaker
-            .position()
-            .saturating_add(real_cycles)
-            .min(self.cpu.cycles());
-        self.speaker
-            .render_until_into(render_target, sample_rate, out);
-        // Fast-forward past any accelerated cycles
-        self.speaker.skip_to(self.cpu.cycles());
-    }
-
-    pub fn take_audio_samples(&mut self, sample_rate: u32, real_cycles: u64) -> Vec<f32> {
-        let mut out = Vec::new();
-        self.take_audio_samples_into(sample_rate, real_cycles, &mut out);
-        out
-    }
-}
-
-impl AppleII {
-    /// Try to intercept RWTS at $B7B5.
-    /// Returns `Some(cycles)` if the trap handled the call, `None` to fall through.
-    fn try_rwts_trap(&mut self) -> Option<u32> {
-        // IOB pointer from A (lo) and Y (hi)
-        let iob_addr = self.cpu.a() as u16 | ((self.cpu.y() as u16) << 8);
-
-        // Read IOB fields via peek (no side effects)
-        let command = self.peek(iob_addr.wrapping_add(0x0C));
-        let track = self.peek(iob_addr.wrapping_add(0x04));
-        let sector = self.peek(iob_addr.wrapping_add(0x05));
-        let buf_lo = self.peek(iob_addr.wrapping_add(0x08));
-        let buf_hi = self.peek(iob_addr.wrapping_add(0x09));
-        let buf_addr = buf_lo as u16 | ((buf_hi as u16) << 8);
-        let drive_num = self.peek(iob_addr.wrapping_add(0x02));
-        let drive_idx = if drive_num <= 1 { 0 } else { 1 };
-
-        match command {
-            0x01 => {
-                // Seek: update half_track, return success
-                self.disk.half_track = track * 2;
-                // Clear error code in IOB
-                self.write(iob_addr.wrapping_add(0x0D), 0);
-                // Clear carry (success) and simulate RTS
-                self.cpu.set_flag(|p| p.set(C, false));
-                self.simulate_rts();
-                Some(50)
-            }
-            0x02 => {
-                // Read: copy sector data from raw image to RAM buffer
-                if let Some(data) = self.disk.read_sector_raw(drive_idx, track, sector) {
-                    for (i, &byte) in data.iter().enumerate() {
-                        self.write(buf_addr.wrapping_add(i as u16), byte);
-                    }
-                    // Update half_track to match
-                    self.disk.half_track = track * 2;
-                    // Clear error code in IOB
-                    self.write(iob_addr.wrapping_add(0x0D), 0);
-                    // Clear carry (success) and simulate RTS
-                    self.cpu.set_flag(|p| p.set(C, false));
-                    self.simulate_rts();
-                    Some(100)
-                } else {
-                    None // fall through to normal emulation
-                }
-            }
-            0x03 => {
-                let mut data = [0u8; 256];
-                for (i, byte) in data.iter_mut().enumerate() {
-                    *byte = self.peek(buf_addr.wrapping_add(i as u16));
-                }
-
-                match self.disk.write_sector_raw(drive_idx, track, sector, &data) {
-                    Ok(()) => {
-                        self.disk.half_track = track * 2;
-                        self.write(iob_addr.wrapping_add(0x0D), 0);
-                        self.cpu.set_flag(|p| p.set(C, false));
-                    }
-                    Err(_) => {
-                        self.write(iob_addr.wrapping_add(0x0D), 0x27);
-                        self.cpu.set_flag(|p| p.set(C, true));
-                    }
-                }
-
-                self.simulate_rts();
-                Some(140)
-            }
-            _ => None, // write or unknown: fall through
-        }
-    }
-
-    /// Simulate an RTS by pulling the return address from the stack.
-    fn simulate_rts(&mut self) {
-        let sp = self.cpu.sp();
-        let lo = self.peek(0x0100 | sp.wrapping_add(1) as u16);
-        let hi = self.peek(0x0100 | sp.wrapping_add(2) as u16);
-        self.cpu.set_sp(sp.wrapping_add(2));
-        self.cpu
-            .set_pc((u16::from(hi) << 8 | u16::from(lo)).wrapping_add(1));
     }
 
     /// Handle display mode soft switches $C050-$C057 (shared by read and write).
@@ -294,10 +68,12 @@ impl AppleII {
             0xC057 => self.display.hires = true,
             _ => {}
         }
+        self.display_mode_gen = self.display_mode_gen.wrapping_add(1);
+        self.video_dirty = true;
     }
 }
 
-impl Bus for AppleII {
+impl Bus for BusState {
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0xBFFF => self.ram[addr as usize],
@@ -343,7 +119,13 @@ impl Bus for AppleII {
 
     fn write(&mut self, addr: u16, val: u8) {
         match addr {
-            0x0000..=0xBFFF => self.ram[addr as usize] = val,
+            0x0000..=0xBFFF => {
+                self.ram[addr as usize] = val;
+                // Mark video dirty on writes to text/lo-res/hi-res pages
+                if addr >= 0x0400 && addr < 0x6000 {
+                    self.video_dirty = true;
+                }
+            }
             0xC010 => {
                 self.kbd_latch &= 0x7F;
             }
@@ -381,6 +163,257 @@ impl Bus for AppleII {
 
     fn set_cycle(&mut self, cycle: u64) {
         self.bus_cycle = cycle;
+    }
+}
+
+/// Apple II emulator: CPU + bus (RAM/ROM/IO).
+pub struct AppleII {
+    pub cpu: Cpu,
+    pub bus: BusState,
+}
+
+impl AppleII {
+    pub fn new() -> Self {
+        Self {
+            cpu: Cpu::new(),
+            bus: BusState::new(),
+        }
+    }
+
+    /// Load a ROM file into $D000-$FFFF.
+    ///
+    /// Supported sizes:
+    ///   - 12K (12288): $D000-$FFFF directly (Apple II, Apple II+)
+    ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
+    pub fn load_rom(&mut self, path: &Path) -> Result<()> {
+        let data = std::fs::read(path)?;
+        match data.len() {
+            0x3000 => {
+                // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
+                self.bus.rom.copy_from_slice(&data);
+            }
+            0x5000 => {
+                // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
+                self.bus.rom.copy_from_slice(&data[0x2000..]);
+                // Extract Disk II slot 6 ROM at $C600-$C6FF (offset $1600)
+                self.bus.disk.load_slot_rom(&data[0x1600..0x1700]);
+            }
+            _ => {
+                return Err(Error::UnsupportedRomSize { actual: data.len() });
+            }
+        }
+        self.bus.rom_loaded = true;
+        Ok(())
+    }
+
+    /// Reset the CPU: reads the reset vector from $FFFC-$FFFD.
+    pub fn reset(&mut self) {
+        self.cpu.reset(&mut self.bus);
+        self.bus.speaker.reset(self.cpu.cycles());
+    }
+
+    /// Execute one CPU instruction. Returns cycles consumed.
+    pub fn step(&mut self) -> u32 {
+        // Check for RWTS trap before executing the instruction
+        if self.bus.fast_disk && self.cpu.pc() == 0xB7B5 {
+            if let Some(cycles) = self.try_rwts_trap() {
+                return cycles;
+            }
+        }
+        let cycles = self.cpu.step(&mut self.bus);
+        self.bus.disk.tick(cycles);
+        cycles
+    }
+
+    /// Run the CPU for at least `target` cycles. Returns actual cycles executed.
+    pub fn run_cycles(&mut self, target: u64) -> u64 {
+        if self.bus.fast_disk {
+            // Auto-turbo while disk motor is spinning for fast boot
+            let effective = if self.bus.disk.motor_on {
+                target.saturating_mul(8)
+            } else {
+                target
+            };
+            // Use run_until so the CPU runs at full speed in a tight loop,
+            // breaking only when PC hits the RWTS entry point.
+            let start = self.cpu.cycles();
+            while self.cpu.cycles() - start < effective {
+                let remaining = effective - (self.cpu.cycles() - start);
+                let ran = self.cpu.run_until(&mut self.bus, remaining, 0xB7B5);
+                if ran != 0 {
+                    self.bus.disk.tick(ran.min(u32::MAX as u64) as u32);
+                }
+
+                if self.cpu.pc() == 0xB7B5 && self.try_rwts_trap().is_none() {
+                    // Not trappable (e.g. write), step past normally
+                    let cycles = self.cpu.step(&mut self.bus);
+                    self.bus.disk.tick(cycles);
+                }
+            }
+            self.cpu.cycles() - start
+        } else {
+            self.cpu.run(&mut self.bus, target)
+        }
+    }
+
+    /// Simulate a key press: sets keyboard latch with strobe bit.
+    /// `ascii` should be the 7-bit ASCII value (e.g., 0x41 for 'A').
+    /// The latch stores `ascii | 0x80` (bit 7 = strobe).
+    pub fn key_press(&mut self, ascii: u8) {
+        self.bus.kbd_latch = ascii | 0x80;
+    }
+
+    /// Load a .dsk disk image into drive 1.
+    pub fn load_disk(&mut self, path: &Path) -> Result<()> {
+        self.bus.disk_controller_enabled = true;
+        self.bus.disk.load_disk(path, 0)
+    }
+
+    /// Enable or disable Disk II slot-6 mapping.
+    pub fn set_disk_controller_enabled(&mut self, enabled: bool) {
+        self.bus.disk_controller_enabled = enabled;
+    }
+
+    /// Enable or disable fast-disk mode (RWTS trap).
+    pub fn set_fast_disk(&mut self, enabled: bool) {
+        self.bus.fast_disk = enabled;
+    }
+
+    /// Returns whether fast-disk mode is active.
+    pub fn is_fast_disk(&self) -> bool {
+        self.bus.fast_disk
+    }
+
+    /// Read-only access to RAM (for video rendering).
+    pub fn ram(&self) -> &[u8] {
+        &self.bus.ram
+    }
+
+    /// Convenience: bus read (with side effects).
+    pub fn read(&mut self, addr: u16) -> u8 {
+        self.bus.read(addr)
+    }
+
+    /// Convenience: bus write.
+    pub fn write(&mut self, addr: u16, val: u8) {
+        self.bus.write(addr, val);
+    }
+
+    /// Convenience: bus peek (no side effects).
+    pub fn peek(&self, addr: u16) -> u8 {
+        self.bus.peek(addr)
+    }
+
+    /// Drain synthesized speaker PCM.
+    ///
+    /// `real_cycles` is the wall-clock-equivalent cycle budget (before turbo/
+    /// fast-disk multiplication). Audio is rendered only for this many cycles
+    /// to prevent buffer accumulation during accelerated execution.
+    pub fn take_audio_samples_into(
+        &mut self,
+        sample_rate: u32,
+        real_cycles: u64,
+        out: &mut Vec<f32>,
+    ) {
+        let render_target = self
+            .bus
+            .speaker
+            .position()
+            .saturating_add(real_cycles)
+            .min(self.cpu.cycles());
+        self.bus
+            .speaker
+            .render_until_into(render_target, sample_rate, out);
+        // Fast-forward past any accelerated cycles
+        self.bus.speaker.skip_to(self.cpu.cycles());
+    }
+
+    pub fn take_audio_samples(&mut self, sample_rate: u32, real_cycles: u64) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.take_audio_samples_into(sample_rate, real_cycles, &mut out);
+        out
+    }
+}
+
+impl AppleII {
+    /// Try to intercept RWTS at $B7B5.
+    /// Returns `Some(cycles)` if the trap handled the call, `None` to fall through.
+    fn try_rwts_trap(&mut self) -> Option<u32> {
+        // IOB pointer from A (lo) and Y (hi)
+        let iob_addr = self.cpu.a() as u16 | ((self.cpu.y() as u16) << 8);
+
+        // Read IOB fields via peek (no side effects)
+        let command = self.bus.peek(iob_addr.wrapping_add(0x0C));
+        let track = self.bus.peek(iob_addr.wrapping_add(0x04));
+        let sector = self.bus.peek(iob_addr.wrapping_add(0x05));
+        let buf_lo = self.bus.peek(iob_addr.wrapping_add(0x08));
+        let buf_hi = self.bus.peek(iob_addr.wrapping_add(0x09));
+        let buf_addr = buf_lo as u16 | ((buf_hi as u16) << 8);
+        let drive_num = self.bus.peek(iob_addr.wrapping_add(0x02));
+        let drive_idx = if drive_num <= 1 { 0 } else { 1 };
+
+        match command {
+            0x01 => {
+                // Seek: update half_track, return success
+                self.bus.disk.half_track = track * 2;
+                // Clear error code in IOB
+                self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                // Clear carry (success) and simulate RTS
+                self.cpu.set_flag(|p| p.set(C, false));
+                self.simulate_rts();
+                Some(50)
+            }
+            0x02 => {
+                // Read: copy sector data from raw image to RAM buffer
+                if let Some(data) = self.bus.disk.read_sector_raw(drive_idx, track, sector) {
+                    for (i, &byte) in data.iter().enumerate() {
+                        self.bus.write(buf_addr.wrapping_add(i as u16), byte);
+                    }
+                    // Update half_track to match
+                    self.bus.disk.half_track = track * 2;
+                    // Clear error code in IOB
+                    self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                    // Clear carry (success) and simulate RTS
+                    self.cpu.set_flag(|p| p.set(C, false));
+                    self.simulate_rts();
+                    Some(100)
+                } else {
+                    None // fall through to normal emulation
+                }
+            }
+            0x03 => {
+                let mut data = [0u8; 256];
+                for (i, byte) in data.iter_mut().enumerate() {
+                    *byte = self.bus.peek(buf_addr.wrapping_add(i as u16));
+                }
+
+                match self.bus.disk.write_sector_raw(drive_idx, track, sector, &data) {
+                    Ok(()) => {
+                        self.bus.disk.half_track = track * 2;
+                        self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                        self.cpu.set_flag(|p| p.set(C, false));
+                    }
+                    Err(_) => {
+                        self.bus.write(iob_addr.wrapping_add(0x0D), 0x27);
+                        self.cpu.set_flag(|p| p.set(C, true));
+                    }
+                }
+
+                self.simulate_rts();
+                Some(140)
+            }
+            _ => None, // write or unknown: fall through
+        }
+    }
+
+    /// Simulate an RTS by pulling the return address from the stack.
+    fn simulate_rts(&mut self) {
+        let sp = self.cpu.sp();
+        let lo = self.bus.peek(0x0100 | sp.wrapping_add(1) as u16);
+        let hi = self.bus.peek(0x0100 | sp.wrapping_add(2) as u16);
+        self.cpu.set_sp(sp.wrapping_add(2));
+        self.cpu
+            .set_pc((u16::from(hi) << 8 | u16::from(lo)).wrapping_add(1));
     }
 }
 
@@ -432,7 +465,7 @@ mod tests {
     #[test]
     fn test_rom_write_ignored() {
         let mut apple = AppleII::new();
-        apple.rom[0] = 0x42;
+        apple.bus.rom[0] = 0x42;
         apple.write(0xD000, 0xFF); // should be ignored
         assert_eq!(apple.read(0xD000), 0x42);
     }
@@ -472,8 +505,8 @@ mod tests {
         let half_period = 512u64;
         for i in 0..200u64 {
             let cycle = i * half_period;
-            crate::bus::Bus::set_cycle(&mut apple, cycle);
-            crate::bus::Bus::read(&mut apple, 0xC030);
+            apple.bus.set_cycle(cycle);
+            apple.bus.read(0xC030);
         }
 
         let total_cycles = 200 * half_period;
@@ -568,7 +601,7 @@ mod tests {
         let mut max_track = 0u8;
         for _ in 0..3_000_000 {
             apple.step();
-            let track = apple.disk.half_track / 2;
+            let track = apple.bus.disk.half_track / 2;
             if track > max_track {
                 max_track = track;
             }
@@ -578,9 +611,9 @@ mod tests {
             max_track >= 2,
             "pc={:04X} track={} max_track={} motor={} 0400={:02X} 0427={:02X} 07D0={:02X}",
             apple.cpu.pc(),
-            apple.disk.half_track / 2,
+            apple.bus.disk.half_track / 2,
             max_track,
-            apple.disk.motor_on,
+            apple.bus.disk.motor_on,
             apple.peek(0x0400),
             apple.peek(0x0427),
             apple.peek(0x07D0)
@@ -631,7 +664,7 @@ mod tests {
         assert!(!apple.cpu.p().get(C));
         assert_eq!(apple.cpu.pc(), 0x1235);
 
-        let sector = apple.disk.read_sector_raw(0, 0, 0).unwrap();
+        let sector = apple.bus.disk.read_sector_raw(0, 0, 0).unwrap();
         for (i, &actual) in sector.iter().enumerate() {
             assert_eq!(actual, (i as u8).wrapping_mul(5).wrapping_add(1));
         }
