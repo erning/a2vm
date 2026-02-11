@@ -245,6 +245,8 @@ fn main() -> io::Result<()> {
     let mut last_bitmap = [0u8; BITMAP_SIZE];
     let mut braille_lines = vec!["".to_string(); BITMAP_HEIGHT / 4];
     let mut braille_initialized = false;
+    #[cfg(feature = "audio")]
+    let mut audio_buffer: Vec<f32> = Vec::with_capacity(4096);
     let frame_duration = Duration::from_micros(NORMAL_RENDER_INTERVAL_US);
     let turbo_render_interval = Duration::from_millis(TURBO_RENDER_INTERVAL_MS);
     let perf_sample_interval = Duration::from_millis(PERF_SAMPLE_INTERVAL_MS);
@@ -316,9 +318,13 @@ fn main() -> io::Result<()> {
 
             #[cfg(feature = "audio")]
             if let Some((_, sink)) = &mut audio {
-                let pcm = apple.take_audio_samples(AUDIO_SAMPLE_RATE, real_cycles);
-                if !pcm.is_empty() {
-                    sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, pcm));
+                apple.take_audio_samples_into(AUDIO_SAMPLE_RATE, real_cycles, &mut audio_buffer);
+                if !audio_buffer.is_empty() {
+                    sink.append(SamplesBuffer::new(
+                        1,
+                        AUDIO_SAMPLE_RATE,
+                        audio_buffer.clone(),
+                    ));
                 }
             }
         }

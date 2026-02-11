@@ -166,6 +166,8 @@ struct App {
     _audio_stream: Option<OutputStream>,
     #[cfg(feature = "audio")]
     audio_sink: Option<Sink>,
+    #[cfg(feature = "audio")]
+    audio_buffer: Vec<f32>,
 
     #[allow(dead_code)]
     fast_disk: bool,
@@ -228,6 +230,8 @@ impl App {
             _audio_stream: audio_stream,
             #[cfg(feature = "audio")]
             audio_sink,
+            #[cfg(feature = "audio")]
+            audio_buffer: Vec::with_capacity(4096),
             fast_disk: cli.fast_disk,
             modifiers: ModifiersState::empty(),
             status_printed: false,
@@ -260,11 +264,18 @@ impl App {
 
             #[cfg(feature = "audio")]
             if let Some(ref sink) = self.audio_sink {
-                let pcm = self
-                    .apple
-                    .take_audio_samples(AUDIO_SAMPLE_RATE, real_cycles);
-                if !pcm.is_empty() {
-                    sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, pcm));
+                self.audio_buffer.clear();
+                self.apple.take_audio_samples_into(
+                    AUDIO_SAMPLE_RATE,
+                    real_cycles,
+                    &mut self.audio_buffer,
+                );
+                if !self.audio_buffer.is_empty() {
+                    sink.append(SamplesBuffer::new(
+                        1,
+                        AUDIO_SAMPLE_RATE,
+                        self.audio_buffer.clone(),
+                    ));
                 }
             }
         }
