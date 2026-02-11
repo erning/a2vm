@@ -598,6 +598,76 @@ impl Cpu {
 
             // -- No-op / Illegal --
             Mnemonic::NOP => 0,
+
+            // -- Illegal opcodes --
+            Mnemonic::LAX => {
+                let val = self.read_operand(resolved, bus);
+                self.a = val;
+                self.x = val;
+                self.p.set_nz(val);
+                0
+            }
+            Mnemonic::SAX => {
+                let addr = self.addr_of(resolved);
+                bus.write(addr, self.a & self.x);
+                0
+            }
+            Mnemonic::DCP => {
+                let addr = self.addr_of(resolved);
+                let val = bus.read(addr).wrapping_sub(1);
+                bus.write(addr, val);
+                self.compare(self.a, val);
+                0
+            }
+            Mnemonic::ISC => {
+                let addr = self.addr_of(resolved);
+                let val = bus.read(addr).wrapping_add(1);
+                bus.write(addr, val);
+                self.sbc(val);
+                0
+            }
+            Mnemonic::SLO => {
+                let addr = self.addr_of(resolved);
+                let mut val = bus.read(addr);
+                self.p.set(C, val & 0x80 != 0);
+                val <<= 1;
+                bus.write(addr, val);
+                self.a |= val;
+                self.p.set_nz(self.a);
+                0
+            }
+            Mnemonic::RLA => {
+                let addr = self.addr_of(resolved);
+                let mut val = bus.read(addr);
+                let carry_in = self.p.get(C) as u8;
+                self.p.set(C, val & 0x80 != 0);
+                val = (val << 1) | carry_in;
+                bus.write(addr, val);
+                self.a &= val;
+                self.p.set_nz(self.a);
+                0
+            }
+            Mnemonic::RRA => {
+                let addr = self.addr_of(resolved);
+                let mut val = bus.read(addr);
+                let carry_in = if self.p.get(C) { 0x80u8 } else { 0 };
+                self.p.set(C, val & 0x01 != 0);
+                val = (val >> 1) | carry_in;
+                bus.write(addr, val);
+                self.adc(val);
+                0
+            }
+            Mnemonic::SRE => {
+                let addr = self.addr_of(resolved);
+                let mut val = bus.read(addr);
+                self.p.set(C, val & 0x01 != 0);
+                val >>= 1;
+                bus.write(addr, val);
+                self.a ^= val;
+                self.p.set_nz(self.a);
+                0
+            }
+
             Mnemonic::ILL => {
                 #[cfg(debug_assertions)]
                 eprintln!("ILL ${opcode:02X} at PC=${instr_pc:04X}");

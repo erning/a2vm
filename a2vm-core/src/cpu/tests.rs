@@ -97,3 +97,163 @@ fn jmp_indirect_wraps_high_byte_within_page() {
 
     assert_eq!(cpu.pc, 0x1234);
 }
+
+// Illegal opcodes tests
+
+#[test]
+fn lax_loads_a_and_x_and_sets_flags() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0xA7;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x42;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.step(&mut mem);
+
+    assert_eq!(cpu.a, 0x42);
+    assert_eq!(cpu.x, 0x42);
+    assert!(!cpu.p.get(N));
+    assert!(!cpu.p.get(Z));
+}
+
+#[test]
+fn lax_sets_negative_flag() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0xA7;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x80;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.step(&mut mem);
+
+    assert_eq!(cpu.a, 0x80);
+    assert_eq!(cpu.x, 0x80);
+    assert!(cpu.p.get(N));
+    assert!(!cpu.p.get(Z));
+}
+
+#[test]
+fn sax_stores_a_and_x() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x87;
+    mem.data[0x0001] = 0x10;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.a = 0xF0;
+    cpu.x = 0x0F;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x00);
+}
+
+#[test]
+fn dcp_decrements_and_compares() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0xC7;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x05;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.a = 0x04;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x04);
+    assert!(cpu.p.get(C));
+    assert!(cpu.p.get(Z));
+    assert!(!cpu.p.get(N));
+}
+
+#[test]
+fn isc_increments_and_sbc() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0xE7;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x05;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.p.set(C, true);
+    cpu.a = 0x10;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x06);
+    assert_eq!(cpu.a, 0x0A);
+}
+
+#[test]
+fn slo_shifts_left_and_ora() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x07;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x81;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.a = 0x01;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x02);
+    assert_eq!(cpu.a, 0x03);
+    assert!(cpu.p.get(C));
+    assert!(!cpu.p.get(N));
+}
+
+#[test]
+fn rla_rotates_left_and_ands() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x27;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x81;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.p.set(C, false);
+    cpu.a = 0xFF;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x02);
+    assert_eq!(cpu.a, 0x02);
+    assert!(cpu.p.get(C));
+    assert!(!cpu.p.get(N));
+}
+
+#[test]
+fn rra_rotates_right_and_adc() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x67;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x82;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.p.set(C, true);
+    cpu.a = 0x10;
+    cpu.step(&mut mem);
+
+    // 0x82 ROR with carry_in=1: (0x82 >> 1) | 0x80 = 0x41 | 0x80 = 0xC1
+    assert_eq!(mem.data[0x0010], 0xC1);
+    // ADC: 0x10 + 0xC1 + 0(new carry from ROR) = 0xD1
+    assert_eq!(cpu.a, 0xD1);
+    assert!(!cpu.p.get(C));
+}
+
+#[test]
+fn sre_shifts_right_and_eors() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x47;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0x82;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.a = 0xFF;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x41);
+    assert_eq!(cpu.a, 0xBE);
+    assert!(!cpu.p.get(C));
+}
