@@ -249,14 +249,20 @@ impl Cpu {
     fn read_operand(&self, resolved: &Resolved, bus: &mut dyn Bus) -> u8 {
         match resolved.operand {
             Operand::Address(addr) => bus.read(addr),
-            _ => 0,
+            _ => {
+                debug_assert!(false, "read_operand expected address operand");
+                0
+            }
         }
     }
 
     fn addr_of(&self, resolved: &Resolved) -> u16 {
         match resolved.operand {
             Operand::Address(addr) => addr,
-            _ => 0,
+            _ => {
+                debug_assert!(false, "addr_of expected address operand");
+                0
+            }
         }
     }
 

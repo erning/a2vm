@@ -42,7 +42,7 @@ impl AppleII {
             disk: DiskII::new(),
             speaker: Speaker::new(),
             bus_cycle: 0,
-            disk_controller_enabled: true,
+            disk_controller_enabled: false,
             fast_disk: false,
             ram: [0; 0xC000],
             rom: [0; 0x3000],
@@ -118,6 +118,8 @@ impl AppleII {
             };
             // Use run_until so the CPU runs at full speed in a tight loop,
             // breaking only when PC hits the RWTS entry point.
+            // TODO: call self.disk.tick(...) in this path when DiskII::tick
+            // models cycle-accurate timing.
             let start = self.cpu.cycles;
             while self.cpu.cycles - start < effective {
                 let remaining = effective - (self.cpu.cycles - start);
@@ -294,6 +296,8 @@ impl Bus for AppleII {
                     0x00
                 }
             }
+            // Keep this catch-all after the specific handlers above.
+            // Match order is significant for overlapping I/O ranges.
             0xC011..=0xC0FF => 0x00,
             // Disk II slot ROM ($C600-$C6FF)
             0xC600..=0xC6FF => {
@@ -442,6 +446,7 @@ mod tests {
 
         let mut apple = AppleII::new();
         apple.load_rom(&path).unwrap();
+        apple.set_disk_controller_enabled(true);
         assert_eq!(apple.read(0xC600), 0xD5);
 
         apple.set_disk_controller_enabled(false);

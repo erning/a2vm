@@ -491,14 +491,14 @@ fn render_hires_scanlines_rgba(
                         let prev_on = if x > 0 {
                             let prev_col = (x - 1) / 7;
                             let prev_bit = (x - 1) % 7;
-                            ram[hgr_line_addr(base, y) + prev_col] & (1 << prev_bit) != 0
+                            ram[addr + prev_col] & (1 << prev_bit) != 0
                         } else {
                             false
                         };
                         let next_on = if x < 279 {
                             let next_col = (x + 1) / 7;
                             let next_bit = (x + 1) % 7;
-                            ram[hgr_line_addr(base, y) + next_col] & (1 << next_bit) != 0
+                            ram[addr + next_col] & (1 << next_bit) != 0
                         } else {
                             false
                         };
