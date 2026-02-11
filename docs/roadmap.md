@@ -137,7 +137,7 @@
 |----|--------|------|
 | TUI/GUI 去重 | 低 | 按当前决策暂停 |
 | 非法操作码完整支持 | ✅ 完成 | 已实现 8 个常用非法操作码：LAX/SAX/DCP/ISC/SLO/RLA/RRA/SRE |
-| 磁盘写入完整链路 | 中 | 已支持 RWTS 写入路径，完善 nibble/raw 双向同步可作为后续里程碑 |
+| 磁盘写入完整链路 | ✅ 完成 | 已实现 nibble/raw 双向同步：`sync_nibble_to_raw()` 支持将 nibblized track 解码回 raw sectors 并持久化到文件 |
 | 音频缓冲复用落地 | 低 | 已提供复用 API，前端调用侧可继续迁移 |
 | Cpu pub 字段封装 | 低 | 当前可用但封装性仍可提升 |
 

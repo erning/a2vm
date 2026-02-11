@@ -303,6 +303,50 @@ impl DiskII {
         }
         drv.dirty = true;
     }
+
+    /// Sync nibblized track data back to raw sectors.
+    /// Call this when disk motor turns off or periodically during writes.
+    pub fn sync_nibble_to_raw(&mut self, drive: usize) -> Result<()> {
+        if drive >= 2 {
+            return Err(Error::InvalidDiskLocation {
+                drive,
+                track: 0,
+                sector: 0,
+            });
+        }
+
+        let drv = &mut self.drives[drive];
+        if !drv.has_disk || !drv.dirty {
+            return Ok(());
+        }
+        if drv.write_protected {
+            return Err(Error::DiskWriteProtected);
+        }
+
+        let raw = drv.raw_data.as_mut().ok_or(Error::DiskNotLoaded)?;
+
+        // Decode each track's sectors back to raw
+        for track in 0..35 {
+            decode_nibblized_track(&drv.nibble_data[track], raw, track)?;
+        }
+
+        drv.dirty = false;
+
+        // Persist to file if path is set
+        if let Some(path) = drv.image_path.as_deref() {
+            std::fs::write(path, &raw[..])?;
+        }
+
+        Ok(())
+    }
+
+    /// Check if a drive has unsynchronized (dirty) nibblized data.
+    pub fn is_dirty(&self, drive: usize) -> bool {
+        if drive >= 2 {
+            return false;
+        }
+        self.drives[drive].dirty
+    }
 }
 
 impl Default for DiskII {
@@ -394,6 +438,114 @@ fn nibblize_sector(buf: &mut Vec<u8>, track: u8, sector: u8, data: &[u8]) {
 
     // Gap 3: 1 sync byte
     buf.push(0xFF);
+}
+
+/// Decode a nibblized track back to raw sectors.
+/// Uses DOS 3.3 sector ordering to map physical sectors to logical sectors.
+fn decode_nibblized_track(
+    nibble_track: &[u8; NIBBLE_TRACK_SIZE],
+    raw: &mut [u8; DSK_SIZE],
+    track: usize,
+) -> Result<()> {
+    let mut pos = 0usize;
+    let mut phys_sector = 0;
+
+    while pos < NIBBLE_TRACK_SIZE {
+        // Look for data field prologue: D5 AA AD
+        if pos + 2 < NIBBLE_TRACK_SIZE
+            && nibble_track[pos] == 0xD5
+            && nibble_track[pos + 1] == 0xAA
+            && nibble_track[pos + 2] == 0xAD
+        {
+            pos += 3;
+
+            let mut encoded = [0u8; 343];
+            let mut encoded_len = 0;
+
+            while pos < NIBBLE_TRACK_SIZE && encoded_len < 343 {
+                let val = nibble_track[pos];
+                if val == 0xDE {
+                    break;
+                }
+                encoded[encoded_len] = val;
+                encoded_len += 1;
+                pos += 1;
+            }
+
+            if encoded_len == 343 {
+                if let Some(data) = decode_6and2_sector(&encoded) {
+                    // Map physical sector to logical sector using DOS 3.3 order
+                    if phys_sector < 16 && track < 35 {
+                        let logical_sector = DOS33_SECTOR_ORDER[phys_sector];
+                        let offset = (track * 16 + logical_sector) * 256;
+                        raw[offset..offset + 256].copy_from_slice(&data);
+                    }
+                    phys_sector += 1;
+                }
+            }
+        }
+        pos += 1;
+    }
+
+    Ok(())
+}
+
+fn decode_6and2_sector(encoded: &[u8; 343]) -> Option<[u8; 256]> {
+    let mut reverse_table = [0u8; 256];
+    for (i, &val) in WRITE_TABLE.iter().enumerate() {
+        reverse_table[val as usize] = i as u8;
+    }
+
+    let mut raw6 = [0u8; MAIN_BYTES];
+    let mut raw2 = [0u8; AUX_BYTES];
+    let mut last = 0u8;
+
+    for idx in 0..AUX_BYTES {
+        let code = encoded[idx];
+        let val = *reverse_table.get(code as usize)?;
+        let dec = val ^ last;
+        raw2[AUX_BYTES - 1 - idx] = dec;
+        last = dec;
+    }
+
+    for idx in 0..MAIN_BYTES {
+        let code = encoded[AUX_BYTES + idx];
+        let val = *reverse_table.get(code as usize)?;
+        let dec = val ^ last;
+        raw6[idx] = dec;
+        last = dec;
+    }
+
+    let checksum_code = encoded[342];
+    let checksum_val = *reverse_table.get(checksum_code as usize)?;
+    let checksum = checksum_val ^ last;
+    if checksum != 0 {
+        return None;
+    }
+
+    let mut data = raw6;
+    let mut j = AUX_BYTES - 1;
+    for byte in &mut data {
+        *byte <<= 1;
+        if (raw2[j] & 0x01) != 0 {
+            *byte |= 0x01;
+        }
+        raw2[j] >>= 1;
+
+        *byte <<= 1;
+        if (raw2[j] & 0x01) != 0 {
+            *byte |= 0x01;
+        }
+        raw2[j] >>= 1;
+
+        if j == 0 {
+            j = AUX_BYTES - 1;
+        } else {
+            j -= 1;
+        }
+    }
+
+    Some(data)
 }
 
 /// 6-and-2 encoding: 256 raw bytes → 342 nibblized bytes + 1 checksum byte.
@@ -701,6 +853,65 @@ mod tests {
         let write_pos = disk.drives[0].byte_position;
         disk.io_write(0xC0EF, 0xA5);
         assert_eq!(disk.drives[0].nibble_data[track][write_pos], 0xA5);
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_nibble_to_raw_sync_roundtrip() {
+        let mut raw = vec![0u8; DSK_SIZE];
+        for i in 0..DSK_SIZE {
+            raw[i] = (i as u8).wrapping_mul(17).wrapping_add(43);
+        }
+        let path = write_temp_dsk(&raw);
+
+        let mut disk = DiskII::new();
+        disk.load_disk(&path, 0).unwrap();
+
+        let original_sector = disk.read_sector_raw(0, 0, 0).unwrap();
+
+        disk.drives[0].dirty = true;
+        disk.sync_nibble_to_raw(0).unwrap();
+
+        let after_sync = disk.read_sector_raw(0, 0, 0).unwrap();
+        assert_eq!(original_sector, after_sync);
+
+        let persisted = fs::read(&path).unwrap();
+        assert_eq!(&persisted[..256], &original_sector[..]);
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_decode_nibblized_track() {
+        let mut raw = [0u8; DSK_SIZE];
+        for i in 0..DSK_SIZE {
+            raw[i] = (i as u8).wrapping_add(1);
+        }
+
+        let mut nibble_tracks = Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]);
+        nibblize_disk(&raw, &mut nibble_tracks);
+
+        let mut decoded = [0u8; DSK_SIZE];
+        for track in 0..35 {
+            decode_nibblized_track(&nibble_tracks[track], &mut decoded, track).unwrap();
+        }
+
+        assert_eq!(raw, decoded);
+    }
+
+    #[test]
+    fn test_sync_preserves_write_protection() {
+        let raw = vec![0u8; DSK_SIZE];
+        let path = write_temp_dsk(&raw);
+
+        let mut disk = DiskII::new();
+        disk.load_disk(&path, 0).unwrap();
+        disk.drives[0].write_protected = true;
+        disk.drives[0].dirty = true;
+
+        let result = disk.sync_nibble_to_raw(0);
+        assert!(matches!(result, Err(Error::DiskWriteProtected)));
 
         fs::remove_file(path).unwrap();
     }
