@@ -5,6 +5,13 @@
 基于 `docs/code-review.md` 的 20 项改进建议，组织为 4 个独立可测试的阶段。
 每个阶段完成后运行 `cargo test && cargo build -p a2vm-tui -p a2vm-gui` 验证。
 
+## 执行状态（2026-02-11）
+
+- ✅ Phase A 已完成并通过验证（`cargo test`、`cargo build -p a2vm-tui -p a2vm-gui`）。
+- ⏸️ Phase B 暂停，待方案确认后再实施。
+- ⏸️ Phase C 暂停，待方案确认后再实施。
+- 🔁 Phase B 设计调整：前端共享逻辑不放入 `a2vm-core`，改为独立 workspace package（暂定名 `a2vm-frontend-common`）。
+
 ---
 
 ## Phase A: 快速修复（6 项，每项 1-5 行改动）
@@ -35,19 +42,23 @@
 
 ---
 
-## Phase B: 代码去重（审查 #3，最大改动）
+## Phase B: 代码去重（审查 #3，最大改动，当前暂停）
 
-将 TUI/GUI 间重复的常量、时序逻辑、CLI 解析提取到 `a2vm-core/src/frontend/`。
+将 TUI/GUI 间重复的常量、时序逻辑、CLI 解析提取到独立 package `a2vm-frontend-common/`，避免污染 `a2vm-core` 边界。
 
-### B1. 新建 `frontend` 模块目录
+### B1. 新建 `a2vm-frontend-common` package
 ```
-a2vm-core/src/frontend/
-├── mod.rs          — pub mod + re-export
-├── constants.rs    — 共享常量
-├── timing.rs       — EmulationTimer
-└── cli.rs          — CommonArgs + build_apple()
+a2vm-frontend-common/
+├── Cargo.toml
+└── src/
+    ├── lib.rs      — pub mod + re-export
+    ├── constants.rs
+    ├── timing.rs
+    └── cli.rs
 ```
-**文件**: `a2vm-core/src/lib.rs` — 添加 `pub mod frontend;`
+**文件**:
+- workspace `Cargo.toml` — 添加 member `a2vm-frontend-common`
+- `a2vm-tui/Cargo.toml`、`a2vm-gui/Cargo.toml` — 添加对 `a2vm-frontend-common` 的依赖
 
 ### B2. 共享常量 (`constants.rs`)
 ```rust
@@ -112,7 +123,7 @@ pub fn build_apple(args: &CommonArgs) -> io::Result<AppleII> {
 
 ---
 
-## Phase C: 新功能
+## Phase C: 新功能（当前暂停）
 
 ### C1. ILL 操作码日志（审查 #6）
 **文件**: `a2vm-core/src/cpu/mod.rs`
