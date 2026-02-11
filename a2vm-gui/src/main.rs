@@ -260,7 +260,9 @@ impl App {
 
             #[cfg(feature = "audio")]
             if let Some(ref sink) = self.audio_sink {
-                let pcm = self.apple.take_audio_samples(AUDIO_SAMPLE_RATE, real_cycles);
+                let pcm = self
+                    .apple
+                    .take_audio_samples(AUDIO_SAMPLE_RATE, real_cycles);
                 if !pcm.is_empty() {
                     sink.append(SamplesBuffer::new(1, AUDIO_SAMPLE_RATE, pcm));
                 }
@@ -335,7 +337,9 @@ impl App {
         );
         self.frame_phase = self.frame_phase.wrapping_add(1);
 
-        pixels.render().ok();
+        if let Err(e) = pixels.render() {
+            eprintln!("render: {e}");
+        }
     }
 
     fn handle_key(&mut self, event: &KeyEvent, event_loop: &ActiveEventLoop) {
