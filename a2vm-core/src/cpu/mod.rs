@@ -377,8 +377,10 @@ impl Cpu {
         &mut self,
         mnemonic: Mnemonic,
         mode: AddrMode,
-        opcode: u8,
-        instr_pc: u16,
+        #[cfg(debug_assertions)] opcode: u8,
+        #[cfg(debug_assertions)] instr_pc: u16,
+        #[cfg(not(debug_assertions))] _opcode: u8,
+        #[cfg(not(debug_assertions))] _instr_pc: u16,
         resolved: &Resolved,
         bus: &mut dyn Bus,
     ) -> u32 {
