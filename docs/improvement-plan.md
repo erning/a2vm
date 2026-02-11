@@ -8,35 +8,36 @@
 ## 执行状态（2026-02-11）
 
 - ✅ Phase A 已完成并通过验证（`cargo test`、`cargo build -p a2vm-tui -p a2vm-gui`）。
-- ⏸️ Phase B 暂停，待方案确认后再实施。
-- ⏸️ Phase C 暂停，待方案确认后再实施。
-- 🔁 Phase B 设计调整：前端共享逻辑不放入 `a2vm-core`，改为独立 workspace package（暂定名 `a2vm-frontend-common`）。
+- ⏸️ Phase B 暂停（按当前决策，TUI/GUI 去重暂不实施）。
+- ✅ Phase C 已完成（C1/C2 已落地并有测试覆盖）。
+- ✅ Phase D 已完成（文档与命名常量更新完成）。
+- 🔁 Phase B 方案保留：前端共享逻辑如后续恢复，仍建议拆到独立 workspace package（暂定名 `a2vm-frontend-common`），不放入 `a2vm-core`。
 
 ---
 
-## Phase A: 快速修复（6 项，每项 1-5 行改动）
+## Phase A: 快速修复（6 项）✅ 已完成
 
-### A1. `read_operand`/`addr_of` 添加 debug_assert（审查 #2）
+### A1. `read_operand`/`addr_of` 防御性分支（审查 #2）✅ 已完成
 **文件**: `a2vm-core/src/cpu/mod.rs:249-261`
-- `_ => 0` 分支添加 `debug_assert!(false, "unexpected operand")`
+- `_ => 0` 的静默返回已移除，改为 `unreachable!(...)` 暴露异常路径。
 
-### A2. `disk_controller_enabled` 默认改为 false（审查 #16）
+### A2. `disk_controller_enabled` 默认改为 false（审查 #16）✅ 已完成
 **文件**: `a2vm-core/src/machine.rs:45`
 - `disk_controller_enabled: true` → `false`
 
-### A3. I/O 地址匹配添加注释（审查 #5）
-**文件**: `a2vm-core/src/machine.rs:270-308`
-- 在 `0xC011..=0xC0FF => 0x00` 上方添加注释说明匹配顺序重要性
+### A3. I/O 地址匹配去重叠（审查 #5）✅ 已完成
+**文件**: `a2vm-core/src/machine.rs`
+- 将 `0xC011..=0xC0FF` 拆分为不重叠区间，降低新增设备时的顺序依赖风险。
 
-### A4. fast-disk 路径添加 TODO（审查 #1）
+### A4. fast-disk 路径补齐 `disk.tick()`（审查 #1）✅ 已完成
 **文件**: `a2vm-core/src/machine.rs:111-142`
-- 在 fast-disk 分支添加 `// TODO: call disk.tick() when cycle-accurate timing is implemented`
+- fast-disk 分支在 `run_until` 与 fallback `step` 后都调用 `disk.tick()`。
 
-### A5. HGR 渲染复用行地址（审查 #11）
+### A5. HGR 渲染复用行地址（审查 #11）✅ 已完成
 **文件**: `a2vm-core/src/video.rs` — `render_hires_scanlines_rgba`
 - 将 `ram[hgr_line_addr(base, y) + prev_col]` 改为 `ram[addr + prev_col]`（addr 已在外层计算）
 
-### A6. `pixels.render()` 错误日志（审查 #13）
+### A6. `pixels.render()` 错误日志（审查 #13）✅ 已完成
 **文件**: `a2vm-gui/src/main.rs:337`
 - `pixels.render().ok()` → `if let Err(e) = pixels.render() { eprintln!("render: {e}"); }`
 
@@ -123,15 +124,15 @@ pub fn build_apple(args: &CommonArgs) -> io::Result<AppleII> {
 
 ---
 
-## Phase C: 新功能（当前暂停）
+## Phase C: 新功能 ✅ 已完成
 
-### C1. ILL 操作码日志（审查 #6）
+### C1. ILL 操作码日志（审查 #6）✅ 已完成（短期目标）
 **文件**: `a2vm-core/src/cpu/mod.rs`
 - `execute()` 签名添加 `opcode: u8` 参数
 - `step()` 调用处传入 opcode
 - ILL 分支添加 `#[cfg(debug_assertions)] eprintln!("ILL ${:02X} at PC=${:04X}", ...)`
 
-### C2. 反汇编器（审查 #8）
+### C2. 反汇编器（审查 #8）✅ 已完成
 **新文件**: `a2vm-core/src/cpu/disasm.rs`
 - `pub fn disasm(bus: &dyn Bus, pc: u16) -> (String, u8)` — 用 `peek` 读取，避免副作用
 - 按寻址模式格式化操作数（`#$FF`, `$1234,X`, `($00),Y` 等）
@@ -142,35 +143,33 @@ pub fn build_apple(args: &CommonArgs) -> io::Result<AppleII> {
 
 ---
 
-## Phase D: 文档更新
+## Phase D: 文档更新 ✅ 已完成
 
-### D1. 更新 `docs/architecture.md`（审查 #18）
+### D1. 更新 `docs/architecture.md`（审查 #18）✅ 已完成
 - 架构图改为 TUI/GUI + a2vm-core（删除 Swift/FFI）
 - 项目结构反映实际文件（删除 keyboard.rs、softswitch.rs、ffi.rs 等）
 - 添加 frontend 模块说明
 
-### D2. 更新 `docs/milestones.md`（审查 #19）
+### D2. 更新 `docs/milestones.md`（审查 #19）✅ 已完成
 - M1-M6 标记为 ✓ COMPLETE
 - 添加 M7（代码质量）及后续目标
 
-### D3. `encode_6and2` 命名常量（审查 #20）
+### D3. `encode_6and2` 命名常量（审查 #20）✅ 已完成
 **文件**: `a2vm-core/src/disk.rs`
-- 添加 `AUX_BYTES=86`, `MAIN_BYTES=256`, `TOTAL_NIBBLES=342`, `ENCODING_BUF_SIZE=344`
+- 添加 `AUX_BYTES=86`, `MAIN_BYTES=256`, `TOTAL_NIBBLES=342` 等命名常量
 - `encode_6and2` 中用命名常量替换 `0x158`, `0x56`, `0x101`, `0x156`
 
 ---
 
-## 延期项
+## 后续项（当前未完成 / 部分完成）
 
 | 项 | 原因 |
 |----|------|
-| #4 自定义错误类型 | 需引入 thiserror，当前规模收益有限 |
-| #7 磁盘写入 | 独立里程碑 |
-| #9 CPU 单元测试 | 持续性工作 |
-| #10 ROM 依赖测试 | CI 相关，非紧急 |
-| #14 Status 枚举 | 改动大（全部 flag 引用），收益有限 |
-| #15 Cpu pub 字段 | 当前规模可接受 |
-| #17 CHAR_ROM 注释 | 极低优先级 |
+| #3 TUI/GUI 去重 | 按当前决策暂停 |
+| #6 非法操作码完整支持 | 已有 debug 日志，常用非法操作码尚未实现 |
+| #7 磁盘写入完整链路 | 已支持 RWTS 写入路径，进一步完善 nibble/raw 双向同步可作为后续里程碑 |
+| #12 音频缓冲复用落地 | 已提供复用 API，前端调用侧可继续迁移 |
+| #15 Cpu pub 字段 | 当前可用但封装性仍可提升 |
 
 ---
 

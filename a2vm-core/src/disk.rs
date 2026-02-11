@@ -1,5 +1,7 @@
-use std::io;
 use std::path::Path;
+use std::path::PathBuf;
+
+use crate::error::{Error, Result};
 
 /// Nibblized track size in bytes.
 const NIBBLE_TRACK_SIZE: usize = 6656;
@@ -26,13 +28,22 @@ const WRITE_TABLE: [u8; 64] = [
     0xF7, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
 ];
 
+const AUX_BYTES: usize = 86;
+const MAIN_BYTES: usize = 256;
+const TOTAL_NIBBLES: usize = AUX_BYTES + MAIN_BYTES;
+const STAGING_SIZE: usize = TOTAL_NIBBLES + 2;
+const IDX6_MAX: usize = 0x101;
+const IDX2_START: i32 = (AUX_BYTES - 1) as i32;
+
 /// A single floppy drive.
 struct Drive {
     nibble_data: Box<[[u8; NIBBLE_TRACK_SIZE]; 35]>,
     raw_data: Option<Box<[u8; DSK_SIZE]>>,
+    image_path: Option<PathBuf>,
     byte_position: usize,
     has_disk: bool,
     write_protected: bool,
+    dirty: bool,
 }
 
 impl Drive {
@@ -40,9 +51,11 @@ impl Drive {
         Self {
             nibble_data: Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]),
             raw_data: None,
+            image_path: None,
             byte_position: 0,
             has_disk: false,
             write_protected: true,
+            dirty: false,
         }
     }
 }
@@ -98,22 +111,68 @@ impl DiskII {
     }
 
     /// Load a .dsk image into a drive (0 or 1).
-    pub fn load_disk(&mut self, path: &Path, drive: usize) -> io::Result<()> {
+    pub fn load_disk(&mut self, path: &Path, drive: usize) -> Result<()> {
         let data = std::fs::read(path)?;
         if data.len() != DSK_SIZE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("DSK image must be {} bytes, got {}", DSK_SIZE, data.len()),
-            ));
+            return Err(Error::InvalidDiskSize {
+                expected: DSK_SIZE,
+                actual: data.len(),
+            });
         }
         let drv = &mut self.drives[drive];
         nibblize_disk(&data, &mut drv.nibble_data);
         let mut raw = Box::new([0u8; DSK_SIZE]);
         raw.copy_from_slice(&data);
+        let write_protected = std::fs::metadata(path)
+            .map(|meta| meta.permissions().readonly())
+            .unwrap_or(true);
         drv.raw_data = Some(raw);
+        drv.image_path = Some(path.to_path_buf());
         drv.has_disk = true;
-        drv.write_protected = true;
+        drv.write_protected = write_protected;
         drv.byte_position = 0;
+        drv.dirty = false;
+        Ok(())
+    }
+
+    pub fn write_sector_raw(
+        &mut self,
+        drive: usize,
+        track: u8,
+        sector: u8,
+        data: &[u8; 256],
+    ) -> Result<()> {
+        if drive >= 2 || track >= 35 || sector >= 16 {
+            return Err(Error::InvalidDiskLocation {
+                drive,
+                track,
+                sector,
+            });
+        }
+
+        let drv = &mut self.drives[drive];
+        if !drv.has_disk {
+            return Err(Error::DiskNotLoaded);
+        }
+        if drv.write_protected {
+            return Err(Error::DiskWriteProtected);
+        }
+
+        let raw = drv.raw_data.as_mut().ok_or(Error::DiskNotLoaded)?;
+        let offset = (track as usize * 16 + sector as usize) * 256;
+        raw[offset..offset + 256].copy_from_slice(data);
+        nibblize_track(
+            &raw[..],
+            &mut drv.nibble_data[track as usize],
+            track as usize,
+        );
+
+        drv.dirty = true;
+        if let Some(path) = drv.image_path.as_deref() {
+            std::fs::write(path, &raw[..])?;
+            drv.dirty = false;
+        }
+
         Ok(())
     }
 
@@ -157,6 +216,7 @@ impl DiskII {
         if self.q6 && self.q7 {
             // Q6 on + Q7 on = write mode: latch data
             self.write_latch = val;
+            self.write_nibble(val);
         }
     }
 
@@ -229,6 +289,20 @@ impl DiskII {
         }
         val
     }
+
+    fn write_nibble(&mut self, val: u8) {
+        let drv = &mut self.drives[self.selected_drive];
+        if !drv.has_disk || drv.write_protected || !self.motor_on {
+            return;
+        }
+        let track = (self.half_track / 2) as usize;
+        drv.nibble_data[track][drv.byte_position] = val;
+        drv.byte_position += 1;
+        if drv.byte_position >= NIBBLE_TRACK_SIZE {
+            drv.byte_position = 0;
+        }
+        drv.dirty = true;
+    }
 }
 
 impl Default for DiskII {
@@ -250,19 +324,22 @@ fn encode_4and4(buf: &mut Vec<u8>, val: u8) {
 /// Nibblize an entire .dsk image (35 tracks × 16 sectors) into nibble tracks.
 fn nibblize_disk(raw: &[u8], out: &mut [[u8; NIBBLE_TRACK_SIZE]; 35]) {
     for (track, out_track) in out.iter_mut().enumerate() {
-        let mut buf = Vec::with_capacity(NIBBLE_TRACK_SIZE);
-        for (phys_sector, &logical_sector) in DOS33_SECTOR_ORDER.iter().enumerate() {
-            let offset = (track * 16 + logical_sector) * 256;
-            let sector_data = &raw[offset..offset + 256];
-
-            nibblize_sector(&mut buf, track as u8, phys_sector as u8, sector_data);
-        }
-        // Fill remainder with sync bytes
-        while buf.len() < NIBBLE_TRACK_SIZE {
-            buf.push(0xFF);
-        }
-        out_track[..NIBBLE_TRACK_SIZE].copy_from_slice(&buf[..NIBBLE_TRACK_SIZE]);
+        nibblize_track(raw, out_track, track);
     }
+}
+
+fn nibblize_track(raw: &[u8], out_track: &mut [u8; NIBBLE_TRACK_SIZE], track: usize) {
+    let mut buf = Vec::with_capacity(NIBBLE_TRACK_SIZE);
+    for (phys_sector, &logical_sector) in DOS33_SECTOR_ORDER.iter().enumerate() {
+        let offset = (track * 16 + logical_sector) * 256;
+        let sector_data = &raw[offset..offset + 256];
+
+        nibblize_sector(&mut buf, track as u8, phys_sector as u8, sector_data);
+    }
+    while buf.len() < NIBBLE_TRACK_SIZE {
+        buf.push(0xFF);
+    }
+    out_track[..NIBBLE_TRACK_SIZE].copy_from_slice(&buf[..NIBBLE_TRACK_SIZE]);
 }
 
 /// Nibblize a single sector: address field + data field.
@@ -321,15 +398,12 @@ fn nibblize_sector(buf: &mut Vec<u8>, track: u8, sector: u8, data: &[u8]) {
 
 /// 6-and-2 encoding: 256 raw bytes → 342 nibblized bytes + 1 checksum byte.
 fn encode_6and2(buf: &mut Vec<u8>, data: &[u8]) {
-    // Build 342-byte 6-and-2 stream: 86 aux bytes + 256 main bytes.
-    // The staging array needs two extra slots because the classic algorithm
-    // iterates idx6 down from 0x101 and writes at ptr6 + idx6.
-    let mut nibbles = [0u8; 0x158];
+    let mut nibbles = [0u8; STAGING_SIZE];
     let ptr2 = 0usize;
-    let ptr6 = 0x56usize;
+    let ptr6 = AUX_BYTES;
 
-    let mut idx2: i32 = 0x55;
-    for idx6 in (0..=0x101usize).rev() {
+    let mut idx2: i32 = IDX2_START;
+    for idx6 in (0..=IDX6_MAX).rev() {
         let mut val6 = data[idx6 & 0xFF];
         let mut val2 = nibbles[ptr2 + idx2 as usize];
 
@@ -343,13 +417,12 @@ fn encode_6and2(buf: &mut Vec<u8>, data: &[u8]) {
 
         idx2 -= 1;
         if idx2 < 0 {
-            idx2 = 0x55;
+            idx2 = IDX2_START;
         }
     }
 
-    // XOR chain + translate through WRITE_TABLE.
     let mut last = 0u8;
-    for &val in &nibbles[..0x156] {
+    for &val in &nibbles[..TOTAL_NIBBLES] {
         buf.push(WRITE_TABLE[(last ^ val) as usize]);
         last = val;
     }
@@ -359,27 +432,40 @@ fn encode_6and2(buf: &mut Vec<u8>, data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_temp_dsk(bytes: &[u8]) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("a2vm-disk-test-{nanos}.dsk"));
+        fs::write(&path, bytes).unwrap();
+        path
+    }
 
     fn decode_6and2_stream(encoded: &[u8]) -> [u8; 256] {
         assert_eq!(encoded.len(), 343);
 
-        let mut raw6 = [0u8; 256];
-        let mut raw2 = [0u8; 86];
+        let mut raw6 = [0u8; MAIN_BYTES];
+        let mut raw2 = [0u8; AUX_BYTES];
         let mut last = 0u8;
 
-        for idx in 0..86 {
+        for idx in 0..AUX_BYTES {
             let code = encoded[idx];
             let val = WRITE_TABLE
                 .iter()
                 .position(|&b| b == code)
                 .expect("invalid 6-and-2 code") as u8;
             let dec = val ^ last;
-            raw2[85 - idx] = dec;
+            raw2[AUX_BYTES - 1 - idx] = dec;
             last = dec;
         }
 
-        for idx in 0..256 {
-            let code = encoded[86 + idx];
+        for idx in 0..MAIN_BYTES {
+            let code = encoded[AUX_BYTES + idx];
             let val = WRITE_TABLE
                 .iter()
                 .position(|&b| b == code)
@@ -398,7 +484,7 @@ mod tests {
         assert_eq!(checksum, 0, "6-and-2 checksum mismatch");
 
         let mut data = raw6;
-        let mut j = 85usize;
+        let mut j = AUX_BYTES - 1;
         for byte in &mut data {
             *byte <<= 1;
             if (raw2[j] & 0x01) != 0 {
@@ -413,7 +499,7 @@ mod tests {
             raw2[j] >>= 1;
 
             if j == 0 {
-                j = 85;
+                j = AUX_BYTES - 1;
             } else {
                 j -= 1;
             }
@@ -573,5 +659,49 @@ mod tests {
         // Select drive 1
         disk.io_read(0xC0EA);
         assert_eq!(disk.selected_drive, 0);
+    }
+
+    #[test]
+    fn test_write_sector_raw_updates_raw_and_file() {
+        let raw = vec![0u8; DSK_SIZE];
+        let path = write_temp_dsk(&raw);
+
+        let mut disk = DiskII::new();
+        disk.load_disk(&path, 0).unwrap();
+
+        let mut sector = [0u8; 256];
+        for (i, b) in sector.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(3).wrapping_add(7);
+        }
+
+        disk.write_sector_raw(0, 0, 0, &sector).unwrap();
+
+        let read_back = disk.read_sector_raw(0, 0, 0).unwrap();
+        assert_eq!(read_back, sector);
+
+        let persisted = fs::read(&path).unwrap();
+        assert_eq!(&persisted[..256], &sector);
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_q6_q7_write_mode_writes_nibble_stream() {
+        let raw = vec![0u8; DSK_SIZE];
+        let path = write_temp_dsk(&raw);
+
+        let mut disk = DiskII::new();
+        disk.load_disk(&path, 0).unwrap();
+
+        disk.io_write(0xC0E9, 0x00);
+        disk.io_write(0xC0ED, 0x00);
+        disk.io_write(0xC0EF, 0x00);
+
+        let track = (disk.half_track / 2) as usize;
+        let write_pos = disk.drives[0].byte_position;
+        disk.io_write(0xC0EF, 0xA5);
+        assert_eq!(disk.drives[0].nibble_data[track][write_pos], 0xA5);
+
+        fs::remove_file(path).unwrap();
     }
 }

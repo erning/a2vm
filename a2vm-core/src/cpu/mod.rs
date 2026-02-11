@@ -1,6 +1,10 @@
 pub mod addressing;
+pub mod disasm;
 pub mod opcodes;
 pub mod status;
+
+#[cfg(test)]
+mod tests;
 
 use crate::bus::Bus;
 use addressing::{AddrMode, Operand, Resolved};
@@ -59,6 +63,7 @@ impl Cpu {
             return self.handle_irq(bus);
         }
 
+        let instr_pc = self.pc;
         let opcode = self.fetch(bus);
         let info = &OPCODES[opcode as usize];
         let resolved = self.resolve(info.mode, bus);
@@ -68,7 +73,7 @@ impl Cpu {
             cycles += 1;
         }
 
-        cycles += self.execute(info.mnemonic, info.mode, &resolved, bus);
+        cycles += self.execute(info.mnemonic, info.mode, opcode, instr_pc, &resolved, bus);
 
         self.cycles += cycles as u64;
         cycles
@@ -250,8 +255,7 @@ impl Cpu {
         match resolved.operand {
             Operand::Address(addr) => bus.read(addr),
             _ => {
-                debug_assert!(false, "read_operand expected address operand");
-                0
+                unreachable!("read_operand expected address operand")
             }
         }
     }
@@ -260,8 +264,7 @@ impl Cpu {
         match resolved.operand {
             Operand::Address(addr) => addr,
             _ => {
-                debug_assert!(false, "addr_of expected address operand");
-                0
+                unreachable!("addr_of expected address operand")
             }
         }
     }
@@ -273,6 +276,8 @@ impl Cpu {
         &mut self,
         mnemonic: Mnemonic,
         mode: AddrMode,
+        opcode: u8,
+        instr_pc: u16,
         resolved: &Resolved,
         bus: &mut dyn Bus,
     ) -> u32 {
@@ -594,7 +599,8 @@ impl Cpu {
             // -- No-op / Illegal --
             Mnemonic::NOP => 0,
             Mnemonic::ILL => {
-                // Treat as NOP for now
+                #[cfg(debug_assertions)]
+                eprintln!("ILL ${opcode:02X} at PC=${instr_pc:04X}");
                 0
             }
         }

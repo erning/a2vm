@@ -1,4 +1,3 @@
-use std::io;
 use std::mem;
 use std::path::Path;
 
@@ -7,6 +6,7 @@ use crate::bus::Bus;
 use crate::cpu::status::C;
 use crate::cpu::Cpu;
 use crate::disk::DiskII;
+use crate::error::{Error, Result};
 use crate::video::DisplayMode;
 
 /// Apple II emulator: CPU + memory + keyboard I/O.
@@ -56,7 +56,7 @@ impl AppleII {
     /// Supported sizes:
     ///   - 12K (12288): $D000-$FFFF directly (Apple II, Apple II+)
     ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
-    pub fn load_rom(&mut self, path: &Path) -> io::Result<()> {
+    pub fn load_rom(&mut self, path: &Path) -> Result<()> {
         let data = std::fs::read(path)?;
         match data.len() {
             0x3000 => {
@@ -70,14 +70,7 @@ impl AppleII {
                 self.disk.load_slot_rom(&data[0x1600..0x1700]);
             }
             _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Unsupported ROM size: {} ({:#X}). Only Apple II / Apple II+ ROMs are supported (12K or 20K).",
-                        data.len(),
-                        data.len()
-                    ),
-                ));
+                return Err(Error::UnsupportedRomSize { actual: data.len() });
             }
         }
         self.rom_loaded = true;
@@ -118,20 +111,22 @@ impl AppleII {
             };
             // Use run_until so the CPU runs at full speed in a tight loop,
             // breaking only when PC hits the RWTS entry point.
-            // TODO: call self.disk.tick(...) in this path when DiskII::tick
-            // models cycle-accurate timing.
             let start = self.cpu.cycles;
             while self.cpu.cycles - start < effective {
                 let remaining = effective - (self.cpu.cycles - start);
                 let mut cpu = mem::take(&mut self.cpu);
-                cpu.run_until(self, remaining, 0xB7B5);
+                let ran = cpu.run_until(self, remaining, 0xB7B5);
                 self.cpu = cpu;
+                if ran != 0 {
+                    self.disk.tick(ran.min(u32::MAX as u64) as u32);
+                }
 
                 if self.cpu.pc == 0xB7B5 && self.try_rwts_trap().is_none() {
                     // Not trappable (e.g. write), step past normally
                     let mut cpu = mem::take(&mut self.cpu);
-                    cpu.step(self);
+                    let cycles = cpu.step(self);
                     self.cpu = cpu;
+                    self.disk.tick(cycles);
                 }
             }
             self.cpu.cycles - start
@@ -151,7 +146,7 @@ impl AppleII {
     }
 
     /// Load a .dsk disk image into drive 1.
-    pub fn load_disk(&mut self, path: &Path) -> io::Result<()> {
+    pub fn load_disk(&mut self, path: &Path) -> Result<()> {
         self.disk_controller_enabled = true;
         self.disk.load_disk(path, 0)
     }
@@ -181,16 +176,27 @@ impl AppleII {
     /// `real_cycles` is the wall-clock-equivalent cycle budget (before turbo/
     /// fast-disk multiplication). Audio is rendered only for this many cycles
     /// to prevent buffer accumulation during accelerated execution.
-    pub fn take_audio_samples(&mut self, sample_rate: u32, real_cycles: u64) -> Vec<f32> {
+    pub fn take_audio_samples_into(
+        &mut self,
+        sample_rate: u32,
+        real_cycles: u64,
+        out: &mut Vec<f32>,
+    ) {
         let render_target = self
             .speaker
             .position()
             .saturating_add(real_cycles)
             .min(self.cpu.cycles);
-        let samples = self.speaker.render_until(render_target, sample_rate);
+        self.speaker
+            .render_until_into(render_target, sample_rate, out);
         // Fast-forward past any accelerated cycles
         self.speaker.skip_to(self.cpu.cycles);
-        samples
+    }
+
+    pub fn take_audio_samples(&mut self, sample_rate: u32, real_cycles: u64) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.take_audio_samples_into(sample_rate, real_cycles, &mut out);
+        out
     }
 }
 
@@ -239,6 +245,27 @@ impl AppleII {
                 } else {
                     None // fall through to normal emulation
                 }
+            }
+            0x03 => {
+                let mut data = [0u8; 256];
+                for (i, byte) in data.iter_mut().enumerate() {
+                    *byte = self.peek(buf_addr.wrapping_add(i as u16));
+                }
+
+                match self.disk.write_sector_raw(drive_idx, track, sector, &data) {
+                    Ok(()) => {
+                        self.disk.half_track = track * 2;
+                        self.write(iob_addr.wrapping_add(0x0D), 0);
+                        self.cpu.p.set(C, false);
+                    }
+                    Err(_) => {
+                        self.write(iob_addr.wrapping_add(0x0D), 0x27);
+                        self.cpu.p.set(C, true);
+                    }
+                }
+
+                self.simulate_rts();
+                Some(140)
             }
             _ => None, // write or unknown: fall through
         }
@@ -296,9 +323,10 @@ impl Bus for AppleII {
                     0x00
                 }
             }
-            // Keep this catch-all after the specific handlers above.
-            // Match order is significant for overlapping I/O ranges.
-            0xC011..=0xC0FF => 0x00,
+            0xC011..=0xC02F => 0x00,
+            0xC031..=0xC04F => 0x00,
+            0xC058..=0xC0DF => 0x00,
+            0xC0F0..=0xC0FF => 0x00,
             // Disk II slot ROM ($C600-$C6FF)
             0xC600..=0xC6FF => {
                 if self.disk_controller_enabled {
@@ -331,7 +359,11 @@ impl Bus for AppleII {
                     self.disk.io_write(addr, val);
                 }
             }
-            0xC000..=0xC0FF => {}
+            0xC000..=0xC00F => {}
+            0xC011..=0xC02F => {}
+            0xC031..=0xC04F => {}
+            0xC058..=0xC0DF => {}
+            0xC0F0..=0xC0FF => {}
             0xC100..=0xCFFF => {}
             0xD000..=0xFFFF => {}
         }
@@ -372,6 +404,21 @@ mod tests {
         path.push(format!("a2vm-rom-test-{nanos}-{suffix}.bin"));
         fs::write(&path, bytes).unwrap();
         path
+    }
+
+    fn write_temp_disk(bytes: &[u8], suffix: &str) -> std::path::PathBuf {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("a2vm-disk-test-{nanos}-{suffix}.dsk"));
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn require_paths(paths: &[&std::path::Path]) -> bool {
+        paths.iter().all(|p| p.exists())
     }
 
     #[test]
@@ -460,6 +507,9 @@ mod tests {
     fn test_apple2p_no_disk_controller_stays_out_of_slot6_boot() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let rom = root.join("roms/apple2p.rom");
+        if !require_paths(&[rom.as_path()]) {
+            return;
+        }
 
         let mut apple = AppleII::new();
         apple.load_rom(&rom).unwrap();
@@ -475,6 +525,9 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let rom = root.join("roms/apple2p.rom");
         let disk = root.join("disks/Apple DOS 3.3 January 1983.dsk");
+        if !require_paths(&[rom.as_path(), disk.as_path()]) {
+            return;
+        }
         let raw = std::fs::read(&disk).unwrap();
         let sector0 = &raw[0..256];
 
@@ -503,6 +556,9 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let rom = root.join("roms/apple2p.rom");
         let disk = root.join("disks/Apple DOS 3.3 January 1983.dsk");
+        if !require_paths(&[rom.as_path(), disk.as_path()]) {
+            return;
+        }
 
         let mut apple = AppleII::new();
         apple.load_rom(&rom).unwrap();
@@ -528,5 +584,58 @@ mod tests {
             apple.peek(0x0427),
             apple.peek(0x07D0)
         );
+    }
+
+    #[test]
+    fn test_rwts_write_trap_writes_sector_data() {
+        let mut rom = vec![0u8; 0x5000];
+        rom[0x2FFC] = 0x00;
+        rom[0x2FFD] = 0xD0;
+        let rom_path = write_temp_file(&rom, "rwts-write-rom");
+
+        let raw_disk = vec![0u8; 143_360];
+        let disk_path = write_temp_disk(&raw_disk, "rwts-write-disk");
+
+        let mut apple = AppleII::new();
+        apple.load_rom(&rom_path).unwrap();
+        apple.load_disk(&disk_path).unwrap();
+
+        let iob = 0x0200u16;
+        let buf = 0x0300u16;
+
+        for i in 0..256u16 {
+            apple.write(
+                buf.wrapping_add(i),
+                (i as u8).wrapping_mul(5).wrapping_add(1),
+            );
+        }
+
+        apple.write(iob.wrapping_add(0x02), 1);
+        apple.write(iob.wrapping_add(0x04), 0);
+        apple.write(iob.wrapping_add(0x05), 0);
+        apple.write(iob.wrapping_add(0x08), (buf & 0xFF) as u8);
+        apple.write(iob.wrapping_add(0x09), (buf >> 8) as u8);
+        apple.write(iob.wrapping_add(0x0C), 0x03);
+        apple.write(iob.wrapping_add(0x0D), 0xFF);
+
+        apple.cpu.a = (iob & 0xFF) as u8;
+        apple.cpu.y = (iob >> 8) as u8;
+        apple.cpu.sp = 0xFD;
+        apple.write(0x01FE, 0x34);
+        apple.write(0x01FF, 0x12);
+
+        let trap_cycles = apple.try_rwts_trap();
+        assert_eq!(trap_cycles, Some(140));
+        assert_eq!(apple.peek(iob.wrapping_add(0x0D)), 0x00);
+        assert!(!apple.cpu.p.get(C));
+        assert_eq!(apple.cpu.pc, 0x1235);
+
+        let sector = apple.disk.read_sector_raw(0, 0, 0).unwrap();
+        for (i, &actual) in sector.iter().enumerate() {
+            assert_eq!(actual, (i as u8).wrapping_mul(5).wrapping_add(1));
+        }
+
+        fs::remove_file(rom_path).unwrap();
+        fs::remove_file(disk_path).unwrap();
     }
 }

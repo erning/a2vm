@@ -5,6 +5,12 @@
 现有 TUI 前端使用 Braille 字符渲染 280×192 单色画面，无法显示 Apple II 的真实色彩。
 目标：用 `pixels` + `winit` 创建 GUI 前端，支持全彩色渲染（Lo-Res 16色、Hi-Res NTSC伪彩、文本绿色磷光），功能与 TUI 对等。
 
+## 状态
+
+- ✅ 本计划已完成落地（`a2vm-gui` 已实现并并入 workspace）。
+- ✅ 文中 Step 1/2/3 均已实现。
+- ℹ️ 本文现作为实施记录保留。
+
 ## 修改文件清单
 
 | 文件 | 操作 | 说明 |
@@ -14,7 +20,7 @@
 | `a2vm-gui/Cargo.toml` | 新建 | 依赖 pixels, winit, rodio(optional), a2vm-core |
 | `a2vm-gui/src/main.rs` | 新建 | 窗口、事件循环、渲染、输入、音频 |
 
-## Step 1: 在 video.rs 添加 RGBA 彩色渲染
+## Step 1: 在 video.rs 添加 RGBA 彩色渲染（✅ 已完成）
 
 在 `a2vm-core/src/video.rs` 中添加：
 
@@ -47,7 +53,7 @@ pub fn render_rgba(
 **状态输出：**
 - GUI 不再在窗口内绘制状态栏，状态信息输出到控制台（stderr）并在同一行刷新。
 
-## Step 2: 创建 a2vm-gui crate
+## Step 2: 创建 a2vm-gui crate（✅ 已完成）
 
 **`a2vm-gui/Cargo.toml`：**
 ```toml
@@ -69,7 +75,7 @@ rodio = { version = "0.21", optional = true }
 
 workspace `Cargo.toml` 加入 `"a2vm-gui"`。
 
-## Step 3: GUI main.rs 实现
+## Step 3: GUI main.rs 实现（✅ 已完成）
 
 结构参照 TUI (`a2vm-tui/src/main.rs`, 427行)，单文件。
 
@@ -133,7 +139,7 @@ struct App {
 - 共享参数：`--rom`, `--disk`, `--fast-disk`, `--help`，支持 `A2VM_ROM` 环境变量。
 - GUI 额外参数：`--color-mode <mode>`，可选 `color`（默认）、`mono`、`mono-scanlines`。
 
-## 实现顺序
+## 实现顺序（✅ 已完成）
 
 1. **video.rs** — 添加 render_rgba + 调色板 + 状态栏渲染
 2. **创建 crate 骨架** — Cargo.toml + 最小 main.rs（打开黑色窗口）

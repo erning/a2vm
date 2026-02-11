@@ -357,8 +357,8 @@ impl App {
 
         // Hotkeys
         if ctrl {
-            match &event.logical_key {
-                Key::Character(c) => match c.as_str() {
+            if let Key::Character(c) = &event.logical_key {
+                match c.as_str() {
                     "q" | "c" => {
                         event_loop.exit();
                         return;
@@ -372,8 +372,7 @@ impl App {
                         return;
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
 

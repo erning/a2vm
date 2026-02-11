@@ -63,18 +63,20 @@ impl Speaker {
     }
 
     /// Synthesize PCM samples up to `target_cycle`.
-    pub fn render_until(&mut self, target_cycle: u64, sample_rate: u32) -> Vec<f32> {
+    pub fn render_until_into(&mut self, target_cycle: u64, sample_rate: u32, out: &mut Vec<f32>) {
+        out.clear();
         if sample_rate == 0 {
-            return Vec::new();
+            return;
         }
 
         let target = target_cycle as f64;
         if target <= self.next_sample_cycle {
-            return Vec::new();
+            return;
         }
 
         let cycles_per_sample = CPU_HZ / sample_rate as f64;
-        let mut out = Vec::new();
+        let expected = ((target - self.next_sample_cycle) / cycles_per_sample).ceil() as usize;
+        out.reserve(expected);
 
         while self.next_sample_cycle < target {
             while let Some(&edge) = self.toggles.front() {
@@ -95,7 +97,11 @@ impl Speaker {
 
             self.next_sample_cycle += cycles_per_sample;
         }
+    }
 
+    pub fn render_until(&mut self, target_cycle: u64, sample_rate: u32) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.render_until_into(target_cycle, sample_rate, &mut out);
         out
     }
 }

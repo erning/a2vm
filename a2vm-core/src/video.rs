@@ -571,9 +571,9 @@ pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: u
         // CHAR_ROM layout: @ABC..Z[\]^_ !"#..0-9:;<=>?
         // ASCII 0x20-0x3F (space..?) → ROM indices 32..63
         // ASCII 0x40-0x5F (@.._ )  → ROM indices 0..31
-        let char_index = if ascii >= 0x20 && ascii < 0x40 {
+        let char_index = if (0x20..0x40).contains(&ascii) {
             (ascii - 0x20 + 32) as usize
-        } else if ascii >= 0x40 && ascii < 0x60 {
+        } else if (0x40..0x60).contains(&ascii) {
             (ascii - 0x40) as usize
         } else {
             0
@@ -639,8 +639,8 @@ mod tests {
     #[test]
     fn test_empty_screen() {
         let mut ram = vec![0u8; 0x0800];
-        for addr in 0x0400..0x0800 {
-            ram[addr] = 0xA0; // normal space
+        for cell in ram.iter_mut().take(0x0800).skip(0x0400) {
+            *cell = 0xA0;
         }
         let mut bitmap = [0u8; BITMAP_SIZE];
         render_text_page(&ram, &mut bitmap, false);
@@ -650,8 +650,8 @@ mod tests {
     #[test]
     fn test_inverse_space_fills() {
         let mut ram = vec![0u8; 0x0800];
-        for addr in 0x0400..0x0800 {
-            ram[addr] = 0x00; // inverse space → solid block
+        for cell in ram.iter_mut().take(0x0800).skip(0x0400) {
+            *cell = 0x00;
         }
         let mut bitmap = [0u8; BITMAP_SIZE];
         render_text_page(&ram, &mut bitmap, false);
@@ -661,7 +661,7 @@ mod tests {
     #[test]
     fn test_text_line_addresses() {
         for &addr in &TEXT_LINE_ADDR {
-            assert!(addr >= 0x0400 && addr < 0x0800);
+            assert!((0x0400..0x0800).contains(&addr));
         }
     }
 
@@ -709,8 +709,8 @@ mod tests {
     #[test]
     fn test_text_slash_orientation_not_mirrored() {
         let mut ram = vec![0u8; 0x0800];
-        for addr in 0x0400..0x0800 {
-            ram[addr] = 0xA0; // normal space
+        for cell in ram.iter_mut().take(0x0800).skip(0x0400) {
+            *cell = 0xA0;
         }
 
         // '/' glyph index = 0x2F in Apple II 64-char hardware order.
