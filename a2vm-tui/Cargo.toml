@@ -5,11 +5,11 @@ edition = "2021"
 
 [features]
 default = ["audio"]
-audio = ["dep:rodio"]
+audio = ["dep:rodio", "a2vm-oxide/audio"]
 
 [dependencies]
 a2vm-core = { workspace = true }
-a2vm-oxide = { workspace = true }
+a2vm-oxide = { workspace = true, default-features = false }
 clap = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

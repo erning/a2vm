@@ -3,8 +3,11 @@ name = "a2vm-oxide"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["audio"]
+audio = ["dep:rodio"]
+
 [dependencies]
 clap = { workspace = true }
-
-[dependencies.a2vm-core]
-workspace = true
+rodio = { workspace = true, optional = true }
+a2vm-core = { workspace = true }
