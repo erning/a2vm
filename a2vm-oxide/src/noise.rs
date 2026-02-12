@@ -1,12 +1,5 @@
-//! Disk II mechanical noise simulation.
-//!
-//! Provides embedded audio assets and state tracking for realistic
-//! mechanical disk drive sounds.
-
-/// Embedded WAV audio for disk arm movement sound.
 pub const MOVE_ARM_WAV: &[u8] = include_bytes!("../../assets/move_arm.wav");
 
-/// Mechanical noise events for Disk II.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MechanicalEvent {
     MotorStart,
@@ -14,7 +7,6 @@ pub enum MechanicalEvent {
     MotorStop,
 }
 
-/// Tracks Disk II motor and track state to generate mechanical noise events.
 pub struct DiskMechTracker {
     motor_was_on: bool,
     last_half_track: u8,

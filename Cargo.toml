@@ -1,3 +1,3 @@
 [workspace]
-members = ["a2vm-core", "a2vm-tui", "a2vm-gui"]
+members = ["a2vm-core", "a2vm-oxide", "a2vm-tui", "a2vm-gui"]
 resolver = "2"

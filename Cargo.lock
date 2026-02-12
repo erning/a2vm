@@ -11,6 +11,7 @@ name = "a2vm-gui"
 version = "0.1.0"
 dependencies = [
  "a2vm-core",
+ "a2vm-oxide",
  "clap",
  "pixels",
  "rodio",
@@ -18,10 +19,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "a2vm-oxide"
+version = "0.1.0"
+
+[[package]]
 name = "a2vm-tui"
 version = "0.1.0"
 dependencies = [
  "a2vm-core",
+ "a2vm-oxide",
  "clap",
  "crossterm",
  "ratatui",

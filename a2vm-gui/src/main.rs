@@ -20,10 +20,10 @@ use std::io::Cursor;
 
 use a2vm_core::keyboard::{map_apple_key, AppleKey};
 use a2vm_core::machine::AppleII;
-#[cfg(feature = "audio")]
-use a2vm_core::mechanical::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
 use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
+#[cfg(feature = "audio")]
+use a2vm_oxide::noise::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
 
 mod cli;
 use crate::cli::CliArgs;
