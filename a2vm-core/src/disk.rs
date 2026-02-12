@@ -637,17 +637,12 @@ fn encode_6and2(buf: &mut Vec<u8>, data: &[u8]) {
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::NamedTempFile;
 
-    fn write_temp_dsk(bytes: &[u8]) -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("a2vm-disk-test-{nanos}.dsk"));
-        fs::write(&path, bytes).unwrap();
-        path
+    fn write_temp_dsk(bytes: &[u8]) -> NamedTempFile {
+        let temp = NamedTempFile::with_suffix(".dsk").unwrap();
+        fs::write(temp.path(), bytes).unwrap();
+        temp
     }
 
     fn decode_6and2_stream(encoded: &[u8]) -> [u8; 256] {
@@ -868,10 +863,11 @@ mod tests {
     #[test]
     fn test_write_sector_raw_updates_raw_and_file() {
         let raw = vec![0u8; DSK_SIZE];
-        let path = write_temp_dsk(&raw);
+        let temp = write_temp_dsk(&raw);
+        let path = temp.path();
 
         let mut disk = DiskII::new();
-        disk.load_disk(&path, 0).unwrap();
+        disk.load_disk(path, 0).unwrap();
 
         let mut sector = [0u8; 256];
         for (i, b) in sector.iter_mut().enumerate() {
@@ -883,19 +879,18 @@ mod tests {
         let read_back = disk.read_sector_raw(0, 0, 0).unwrap();
         assert_eq!(read_back, sector);
 
-        let persisted = fs::read(&path).unwrap();
+        let persisted = fs::read(path).unwrap();
         assert_eq!(&persisted[..256], &sector);
-
-        fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn test_q6_q7_write_mode_writes_nibble_stream() {
         let raw = vec![0u8; DSK_SIZE];
-        let path = write_temp_dsk(&raw);
+        let temp = write_temp_dsk(&raw);
+        let path = temp.path();
 
         let mut disk = DiskII::new();
-        disk.load_disk(&path, 0).unwrap();
+        disk.load_disk(path, 0).unwrap();
 
         disk.io_write(0xC0E9, 0x00);
         disk.io_write(0xC0ED, 0x00);
@@ -905,8 +900,6 @@ mod tests {
         let write_pos = disk.drives[0].byte_position;
         disk.io_write(0xC0EF, 0xA5);
         assert_eq!(disk.drives[0].nibble_data[track][write_pos], 0xA5);
-
-        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -915,10 +908,11 @@ mod tests {
         for (i, byte) in raw.iter_mut().enumerate() {
             *byte = (i as u8).wrapping_mul(17).wrapping_add(43);
         }
-        let path = write_temp_dsk(&raw);
+        let temp = write_temp_dsk(&raw);
+        let path = temp.path();
 
         let mut disk = DiskII::new();
-        disk.load_disk(&path, 0).unwrap();
+        disk.load_disk(path, 0).unwrap();
 
         let original_sector = disk.read_sector_raw(0, 0, 0).unwrap();
 
@@ -928,10 +922,8 @@ mod tests {
         let after_sync = disk.read_sector_raw(0, 0, 0).unwrap();
         assert_eq!(original_sector, after_sync);
 
-        let persisted = fs::read(&path).unwrap();
+        let persisted = fs::read(path).unwrap();
         assert_eq!(&persisted[..256], &original_sector[..]);
-
-        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -955,16 +947,15 @@ mod tests {
     #[test]
     fn test_sync_preserves_write_protection() {
         let raw = vec![0u8; DSK_SIZE];
-        let path = write_temp_dsk(&raw);
+        let temp = write_temp_dsk(&raw);
+        let path = temp.path();
 
         let mut disk = DiskII::new();
-        disk.load_disk(&path, 0).unwrap();
+        disk.load_disk(path, 0).unwrap();
         disk.drives[0].write_protected = true;
         disk.drives[0].dirty = true;
 
         let result = disk.sync_nibble_to_raw(0);
         assert!(matches!(result, Err(Error::DiskWriteProtected)));
-
-        fs::remove_file(path).unwrap();
     }
 }

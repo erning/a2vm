@@ -475,28 +475,18 @@ impl Default for AppleII {
 mod tests {
     use super::*;
     use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::NamedTempFile;
 
-    fn write_temp_file(bytes: &[u8], suffix: &str) -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("a2vm-rom-test-{nanos}-{suffix}.bin"));
-        fs::write(&path, bytes).unwrap();
-        path
+    fn write_temp_file(bytes: &[u8], _suffix: &str) -> NamedTempFile {
+        let temp = NamedTempFile::with_suffix(".bin").unwrap();
+        fs::write(temp.path(), bytes).unwrap();
+        temp
     }
 
-    fn write_temp_disk(bytes: &[u8], suffix: &str) -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("a2vm-disk-test-{nanos}-{suffix}.dsk"));
-        fs::write(&path, bytes).unwrap();
-        path
+    fn write_temp_disk(bytes: &[u8], _suffix: &str) -> NamedTempFile {
+        let temp = NamedTempFile::with_suffix(".dsk").unwrap();
+        fs::write(temp.path(), bytes).unwrap();
+        temp
     }
 
     fn require_paths(paths: &[&std::path::Path]) -> bool {
@@ -571,18 +561,16 @@ mod tests {
         let mut rom = vec![0u8; 0x5000];
         rom[0x1600] = 0xD5;
         rom[0x16FF] = 0xAA;
-        let path = write_temp_file(&rom, "20k-disable");
+        let temp = write_temp_file(&rom, "20k-disable");
 
         let mut apple = AppleII::new();
-        apple.load_rom(&path).unwrap();
+        apple.load_rom(temp.path()).unwrap();
         apple.set_disk_controller_enabled(true);
         assert_eq!(apple.read(0xC600), 0xD5);
 
         apple.set_disk_controller_enabled(false);
         assert_eq!(apple.read(0xC600), 0x00);
         assert_eq!(apple.read(0xC0EC), 0x00);
-
-        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -673,14 +661,14 @@ mod tests {
         let mut rom = vec![0u8; 0x5000];
         rom[0x2FFC] = 0x00;
         rom[0x2FFD] = 0xD0;
-        let rom_path = write_temp_file(&rom, "rwts-write-rom");
+        let rom_temp = write_temp_file(&rom, "rwts-write-rom");
 
         let raw_disk = vec![0u8; 143_360];
-        let disk_path = write_temp_disk(&raw_disk, "rwts-write-disk");
+        let disk_temp = write_temp_disk(&raw_disk, "rwts-write-disk");
 
         let mut apple = AppleII::new();
-        apple.load_rom(&rom_path).unwrap();
-        apple.load_disk(&disk_path).unwrap();
+        apple.load_rom(rom_temp.path()).unwrap();
+        apple.load_disk(disk_temp.path()).unwrap();
 
         let iob = 0x0200u16;
         let buf = 0x0300u16;
@@ -716,8 +704,5 @@ mod tests {
         for (i, &actual) in sector.iter().enumerate() {
             assert_eq!(actual, (i as u8).wrapping_mul(5).wrapping_add(1));
         }
-
-        fs::remove_file(rom_path).unwrap();
-        fs::remove_file(disk_path).unwrap();
     }
 }
