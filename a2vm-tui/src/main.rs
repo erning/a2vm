@@ -28,64 +28,42 @@ use a2vm_oxide::noise::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
 
 mod cli;
 
-/// Turbo multiplier when enabled from the TUI.
 const TURBO_MULTIPLIER: u64 = 4;
-
-/// Normal draw cadence (~60 FPS).
 const NORMAL_RENDER_INTERVAL_US: u64 = 16_667;
-
-/// Turbo draw cadence (reduced redraw pressure).
 const TURBO_RENDER_INTERVAL_MS: u64 = 50;
-
-/// Flash half-period used by Apple II text blinking.
 const FLASH_HALF_PERIOD_MS: u128 = 267;
-
-/// Perf sample window for measured emulation speed.
 const PERF_SAMPLE_INTERVAL_MS: u64 = 250;
 
-/// PCM output sample rate.
 #[cfg(feature = "audio")]
 const AUDIO_SAMPLE_RATE: u32 = 44_100;
 
-/// Braille bit position lookup: BRAILLE_BIT[dx][dy] gives the bit index
-/// within the Braille codepoint for pixel offset (dx, dy).
-///
-/// Each Braille character (U+2800..U+28FF) encodes a 2×4 dot matrix:
-///   (0,0)→0  (1,0)→3
-///   (0,1)→1  (1,1)→4
-///   (0,2)→2  (1,2)→5
-///   (0,3)→6  (1,3)→7
-const BRAILLE_BIT: [[u8; 4]; 2] = [
-    [0, 1, 2, 6], // dx=0: dy=0..3
-    [3, 4, 5, 7], // dx=1: dy=0..3
-];
+const DISPLAY_W: u16 = 142;
+const DISPLAY_H: u16 = 50;
 
-/// Convert a 280×192 monochrome bitmap to a grid of Braille characters.
-///
-/// Result: 140 columns × 48 rows.
+const BRAILLE_BIT: [[u8; 4]; 2] = [[0, 1, 2, 6], [3, 4, 5, 7]];
+
 fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
-    let cols = BITMAP_WIDTH / 2; // 140
-    let rows = BITMAP_HEIGHT / 4; // 48
+    let cols = BITMAP_WIDTH / 2;
+    let rows = BITMAP_HEIGHT / 4;
     let mut lines = Vec::with_capacity(rows);
 
     for brow in 0..rows {
-        let mut line = String::with_capacity(cols * 3); // UTF-8 braille = 3 bytes each
+        let mut line = String::with_capacity(cols * 3);
         for bcol in 0..cols {
             let px = bcol * 2;
             let py = brow * 4;
             let mut bits: u8 = 0;
 
-            // Sample the 2×4 pixel block
-            for dy in 0..4usize {
-                for dx in 0..2usize {
+            for (dx, dy_bits) in BRAILLE_BIT.iter().enumerate() {
+                for (dy, &braille_bit) in dy_bits.iter().enumerate() {
                     let x = px + dx;
                     let y = py + dy;
                     let byte_idx = y * BITMAP_STRIDE + x / 8;
-                    let bit_idx = 7 - (x % 8); // MSB-first
+                    let bit_idx = 7 - (x % 8);
                     let pixel = (bitmap[byte_idx] >> bit_idx) & 1;
 
                     if pixel != 0 {
-                        bits |= 1 << BRAILLE_BIT[dx][dy];
+                        bits |= 1 << braille_bit;
                     }
                 }
             }
@@ -99,10 +77,7 @@ fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
     lines
 }
 
-/// Map a crossterm KeyEvent to an Apple II ASCII value.
-/// Returns None if the key should not be sent to the Apple II.
 fn map_key(key: KeyEvent) -> Option<u8> {
-    // Don't send keys with Alt modifier
     if key.modifiers.contains(KeyModifiers::ALT) {
         return None;
     }
@@ -125,94 +100,108 @@ fn map_key(key: KeyEvent) -> Option<u8> {
     }
 }
 
-fn main() -> io::Result<()> {
-    let cli = cli::parse();
+struct TuiApp {
+    apple: AppleII,
+    turbo: bool,
+    emu_mhz: f64,
 
-    // Create Apple II and load ROM
-    let mut apple = AppleII::new();
-    apple.load_rom(&cli.rom)?;
+    boot_time: Instant,
+    last_emu_tick: Instant,
+    last_render_time: Instant,
+    cycle_accum: u128,
+    perf_last_time: Instant,
+    perf_last_cycles: u64,
 
-    // Expose Disk II controller only when a disk image is provided.
-    apple.set_disk_controller_enabled(!cli.disk.is_empty());
+    #[cfg(feature = "audio")]
+    _audio_stream: Option<OutputStream>,
+    #[cfg(feature = "audio")]
+    audio_sink: Option<Sink>,
+    #[cfg(feature = "audio")]
+    mech_sink: Option<Sink>,
+    #[cfg(feature = "audio")]
+    mech_tracker: DiskMechTracker,
+    #[cfg(feature = "audio")]
+    audio_buffer: Vec<f32>,
+    noise: bool,
 
-    for (drive, disk) in cli.disk.iter().enumerate() {
-        apple.load_disk_into_drive(disk, drive)?;
+    bitmap: [u8; BITMAP_SIZE],
+    last_bitmap: [u8; BITMAP_SIZE],
+    braille_lines: Vec<String>,
+    braille_initialized: bool,
+}
+
+impl TuiApp {
+    fn new(cli: &cli::CliArgs) -> io::Result<Self> {
+        let mut apple = AppleII::new();
+        apple.load_rom(&cli.rom).map_err(io::Error::other)?;
+
+        apple.set_disk_controller_enabled(!cli.disk.is_empty());
+
+        for (drive, disk) in cli.disk.iter().enumerate() {
+            apple
+                .load_disk_into_drive(disk, drive)
+                .map_err(io::Error::other)?;
+        }
+
+        if cli.fast_disk {
+            apple.set_fast_disk(true);
+        }
+
+        apple.reset();
+
+        #[cfg(feature = "audio")]
+        let (_audio_stream, audio_sink, mech_sink) =
+            match OutputStreamBuilder::open_default_stream() {
+                Ok(stream) => {
+                    let speaker = Sink::connect_new(stream.mixer());
+                    let mech = Sink::connect_new(stream.mixer());
+                    (Some(stream), Some(speaker), Some(mech))
+                }
+                Err(_) => (None, None, None),
+            };
+
+        let now = Instant::now();
+
+        Ok(Self {
+            apple,
+            turbo: false,
+            emu_mhz: 0.0,
+            boot_time: now,
+            last_emu_tick: now,
+            last_render_time: now - Duration::from_micros(NORMAL_RENDER_INTERVAL_US),
+            cycle_accum: 0,
+            perf_last_time: now,
+            perf_last_cycles: 0,
+            #[cfg(feature = "audio")]
+            _audio_stream,
+            #[cfg(feature = "audio")]
+            audio_sink,
+            #[cfg(feature = "audio")]
+            mech_sink,
+            #[cfg(feature = "audio")]
+            mech_tracker: DiskMechTracker::new(),
+            #[cfg(feature = "audio")]
+            audio_buffer: Vec::with_capacity(4096),
+            noise: cli.noise,
+            bitmap: [0u8; BITMAP_SIZE],
+            last_bitmap: [0u8; BITMAP_SIZE],
+            braille_lines: vec!["".to_string(); BITMAP_HEIGHT / 4],
+            braille_initialized: false,
+        })
     }
 
-    if cli.fast_disk {
-        apple.set_fast_disk(true);
-    }
-
-    apple.reset();
-
-    let noise = cli.noise;
-
-    // Set up audio playback (best-effort).
-    #[cfg(feature = "audio")]
-    let (audio, mech_sink): (Option<(OutputStream, Sink)>, Option<Sink>) =
-        match OutputStreamBuilder::open_default_stream() {
-            Ok(stream) => {
-                let speaker_sink = Sink::connect_new(stream.mixer());
-                let mech = Sink::connect_new(stream.mixer());
-                (Some((stream, speaker_sink)), Some(mech))
-            }
-            Err(_) => (None, None),
-        };
-    #[cfg(not(feature = "audio"))]
-    let _audio: () = ();
-
-    #[cfg(feature = "audio")]
-    let mut mech_tracker = DiskMechTracker::new();
-
-    // Set up terminal
-    terminal::enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let mut bitmap = [0u8; BITMAP_SIZE];
-    let mut last_bitmap = [0u8; BITMAP_SIZE];
-    let mut braille_lines = vec!["".to_string(); BITMAP_HEIGHT / 4];
-    let mut braille_initialized = false;
-    #[cfg(feature = "audio")]
-    let mut audio_buffer: Vec<f32> = Vec::with_capacity(4096);
-    let frame_duration = Duration::from_micros(NORMAL_RENDER_INTERVAL_US);
-    let turbo_render_interval = Duration::from_millis(TURBO_RENDER_INTERVAL_MS);
-    let perf_sample_interval = Duration::from_millis(PERF_SAMPLE_INTERVAL_MS);
-    let boot_time = Instant::now();
-    let mut last_render_time = Instant::now() - frame_duration;
-    let mut last_emu_tick = Instant::now();
-    let mut cycle_accum: u128 = 0;
-    let mut turbo = false;
-    let mut emu_mhz: f64 = 0.0;
-    let mut perf_last_time = Instant::now();
-    let mut perf_last_cycles = apple.cpu.cycles();
-
-    // Main loop
-    loop {
-        let frame_start = Instant::now();
-
-        // Poll keyboard events (non-blocking)
+    fn handle_input(&mut self) -> io::Result<bool> {
         while event::poll(Duration::ZERO)? {
             if let Event::Key(key) = event::read()? {
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match key.code {
-                        KeyCode::Char('q') => {
-                            // Restore terminal (best-effort: don't propagate cleanup errors)
-                            terminal::disable_raw_mode().ok();
-                            execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)
-                                .ok();
-                            return Ok(());
-                        }
+                        KeyCode::Char('q') => return Ok(true),
                         KeyCode::Char('r') => {
-                            // Ctrl+R → reset
-                            apple.reset();
+                            self.apple.reset();
                             continue;
                         }
                         KeyCode::Char('t') => {
-                            // Ctrl+T → turbo toggle
-                            turbo = !turbo;
+                            self.turbo = !self.turbo;
                             continue;
                         }
                         _ => {}
@@ -220,171 +209,223 @@ fn main() -> io::Result<()> {
                 }
 
                 if let Some(ascii) = map_key(key) {
-                    apple.key_press(ascii);
+                    self.apple.key_press(ascii);
                 }
             }
         }
+        Ok(false)
+    }
 
-        // Run CPU based on real elapsed wall-clock time.
+    fn run_emulation(&mut self) {
         let now = Instant::now();
-        let mut dt = now.saturating_duration_since(last_emu_tick);
-        last_emu_tick = now;
+        let mut dt = now.saturating_duration_since(self.last_emu_tick);
+        self.last_emu_tick = now;
+
         if dt > Duration::from_millis(100) {
             dt = Duration::from_millis(100);
         }
 
-        cycle_accum += dt.as_nanos() * CPU_HZ as u128;
-        let real_cycles = (cycle_accum / 1_000_000_000) as u64;
-        cycle_accum %= 1_000_000_000;
+        self.cycle_accum += dt.as_nanos() * CPU_HZ as u128;
+        let real_cycles = (self.cycle_accum / 1_000_000_000) as u64;
+        self.cycle_accum %= 1_000_000_000;
 
         let mut cycles_to_run = real_cycles;
-        if turbo {
+        if self.turbo {
             cycles_to_run = cycles_to_run.saturating_mul(TURBO_MULTIPLIER);
         }
 
-        if cycles_to_run != 0 {
-            apple.run_cycles(cycles_to_run);
+        if cycles_to_run == 0 {
+            return;
+        }
 
-            #[cfg(feature = "audio")]
-            if let Some((_, sink)) = &audio {
-                apple.take_audio_samples_into(AUDIO_SAMPLE_RATE, real_cycles, &mut audio_buffer);
-                if !audio_buffer.is_empty() {
-                    sink.append(SamplesBuffer::new(
-                        1,
-                        AUDIO_SAMPLE_RATE,
-                        std::mem::take(&mut audio_buffer),
-                    ));
-                }
+        self.apple.run_cycles(cycles_to_run);
+
+        #[cfg(feature = "audio")]
+        if let Some(ref sink) = self.audio_sink {
+            self.apple.take_audio_samples_into(
+                AUDIO_SAMPLE_RATE,
+                real_cycles,
+                &mut self.audio_buffer,
+            );
+            if !self.audio_buffer.is_empty() {
+                sink.append(SamplesBuffer::new(
+                    1,
+                    AUDIO_SAMPLE_RATE,
+                    std::mem::take(&mut self.audio_buffer),
+                ));
             }
+        }
 
-            #[cfg(feature = "audio")]
-            if noise {
-                if let Some(ref sink) = mech_sink {
-                    let event =
-                        mech_tracker.check(apple.bus.disk.motor_on, apple.bus.disk.half_track);
-                    if let Some(evt) = event {
-                        match evt {
-                            MechanicalEvent::MotorStart => {
-                                let cursor = Cursor::new(MOVE_ARM_WAV);
-                                if let Ok(source) = Decoder::new(cursor) {
-                                    sink.append(source.repeat_infinite());
-                                }
+        #[cfg(feature = "audio")]
+        if self.noise {
+            if let Some(ref sink) = self.mech_sink {
+                let event = self
+                    .mech_tracker
+                    .check(self.apple.bus.disk.motor_on, self.apple.bus.disk.half_track);
+                if let Some(evt) = event {
+                    match evt {
+                        MechanicalEvent::MotorStart => {
+                            let cursor = Cursor::new(MOVE_ARM_WAV);
+                            if let Ok(source) = Decoder::new(cursor) {
+                                sink.append(source.repeat_infinite());
                             }
-                            MechanicalEvent::TrackSeek => {
-                                sink.stop();
-                                let cursor = Cursor::new(MOVE_ARM_WAV);
-                                if let Ok(source) = Decoder::new(cursor) {
-                                    sink.append(source.repeat_infinite());
-                                }
+                        }
+                        MechanicalEvent::TrackSeek => {
+                            sink.stop();
+                            let cursor = Cursor::new(MOVE_ARM_WAV);
+                            if let Ok(source) = Decoder::new(cursor) {
+                                sink.append(source.repeat_infinite());
                             }
-                            MechanicalEvent::MotorStop => {
-                                sink.stop();
-                            }
+                        }
+                        MechanicalEvent::MotorStop => {
+                            sink.stop();
                         }
                     }
                 }
             }
         }
+    }
 
-        // Update measured emulation speed.
-        let perf_now = Instant::now();
-        let perf_elapsed = perf_now.saturating_duration_since(perf_last_time);
-        if perf_elapsed >= perf_sample_interval {
-            let delta_cycles = apple.cpu.cycles().saturating_sub(perf_last_cycles);
-            let secs = perf_elapsed.as_secs_f64();
+    fn update_perf(&mut self) {
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.perf_last_time);
+
+        if elapsed >= Duration::from_millis(PERF_SAMPLE_INTERVAL_MS) {
+            let delta_cycles = self
+                .apple
+                .cpu
+                .cycles()
+                .saturating_sub(self.perf_last_cycles);
+            let secs = elapsed.as_secs_f64();
             if secs > 0.0 {
-                emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
+                self.emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
             }
-            perf_last_cycles = apple.cpu.cycles();
-            perf_last_time = perf_now;
+            self.perf_last_cycles = self.apple.cpu.cycles();
+            self.perf_last_time = now;
         }
+    }
 
-        // Render and redraw only when due.
-        let render_interval = if turbo {
-            turbo_render_interval
+    fn render(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
+        let render_interval = if self.turbo {
+            Duration::from_millis(TURBO_RENDER_INTERVAL_MS)
         } else {
-            frame_duration
+            Duration::from_micros(NORMAL_RENDER_INTERVAL_US)
         };
-        if Instant::now().saturating_duration_since(last_render_time) >= render_interval {
-            let flash_on = ((boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
-            video::render(apple.ram(), &apple.bus.display, flash_on, &mut bitmap);
 
-            if !braille_initialized || bitmap != last_bitmap {
-                braille_lines = bitmap_to_braille(&bitmap);
-                last_bitmap.copy_from_slice(&bitmap);
-                braille_initialized = true;
-            }
-
-            // Draw TUI each render tick so the status bar updates immediately.
-            // Fixed display size: 140×48 content + 2 for border = 142×50, plus 1 status bar
-            const DISPLAY_W: u16 = 142; // 140 braille cols + 2 border
-            const DISPLAY_H: u16 = 50; // 48 braille rows + 2 border
-
-            terminal.draw(|frame| {
-                let area = frame.area();
-
-                // Center the fixed-size display within the terminal
-                let x = area.x + area.width.saturating_sub(DISPLAY_W) / 2;
-                let y = area.y;
-                let display_rect =
-                    Rect::new(x, y, DISPLAY_W.min(area.width), DISPLAY_H.min(area.height));
-
-                // Braille display in a bordered block
-                let display_lines: Vec<Line> = braille_lines
-                    .iter()
-                    .map(|s| Line::from(Span::styled(s.as_str(), Style::default().fg(Color::Green))))
-                    .collect();
-
-                let display =
-                    Paragraph::new(display_lines).block(Block::default().borders(Borders::ALL).title(" A2VM "));
-                frame.render_widget(display, display_rect);
-
-                // Status bar below the display
-                let status_y = display_rect.y + display_rect.height;
-                if status_y < area.y + area.height {
-                    let cpu = &apple.cpu;
-                    let mode = if apple.bus.display.text {
-                        "TEXT"
-                    } else if apple.bus.display.hires {
-                        "HGR"
-                    } else {
-                        "GR"
-                    };
-                    let disk_status = if apple.bus.disk.motor_on {
-                        format!("D:T{}", apple.bus.disk.half_track / 2)
-                    } else {
-                        "D:--".to_string()
-                    };
-                    let fast_label = if apple.is_fast_disk() { " FAST" } else { "" };
-                    let status = format!(
-                        " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{} EMU:{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
-                        cpu.pc(),
-                        cpu.a(),
-                        cpu.x(),
-                        cpu.y(),
-                        cpu.sp(),
-                        cpu.p().0,
-                        mode,
-                        disk_status,
-                        fast_label,
-                        emu_mhz
-                    );
-                    let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
-                    let status_bar = Paragraph::new(Line::from(Span::styled(
-                        status,
-                        Style::default().fg(Color::Cyan),
-                    )));
-                    frame.render_widget(status_bar, status_rect);
-                }
-            })?;
-
-            last_render_time = Instant::now();
+        if Instant::now().saturating_duration_since(self.last_render_time) < render_interval {
+            return Ok(());
         }
 
-        // Frame rate limiting
+        let flash_on = ((self.boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
+        video::render(
+            self.apple.ram(),
+            &self.apple.bus.display,
+            flash_on,
+            &mut self.bitmap,
+        );
+
+        if !self.braille_initialized || self.bitmap != self.last_bitmap {
+            self.braille_lines = bitmap_to_braille(&self.bitmap);
+            self.last_bitmap.copy_from_slice(&self.bitmap);
+            self.braille_initialized = true;
+        }
+
+        let emu_mhz = self.emu_mhz;
+        let apple = &self.apple;
+        let braille_lines = &self.braille_lines;
+
+        terminal.draw(|frame| {
+            let area = frame.area();
+
+            let x = area.x + area.width.saturating_sub(DISPLAY_W) / 2;
+            let y = area.y;
+            let display_rect =
+                Rect::new(x, y, DISPLAY_W.min(area.width), DISPLAY_H.min(area.height));
+
+            let display_lines: Vec<Line> = braille_lines
+                .iter()
+                .map(|s| Line::from(Span::styled(s.as_str(), Style::default().fg(Color::Green))))
+                .collect();
+
+            let display = Paragraph::new(display_lines)
+                .block(Block::default().borders(Borders::ALL).title(" A2VM "));
+            frame.render_widget(display, display_rect);
+
+            let status_y = display_rect.y + display_rect.height;
+            if status_y < area.y + area.height {
+                let cpu = &apple.cpu;
+                let mode = if apple.bus.display.text {
+                    "TEXT"
+                } else if apple.bus.display.hires {
+                    "HGR"
+                } else {
+                    "GR"
+                };
+                let disk_status = if apple.bus.disk.motor_on {
+                    format!("D:T{}", apple.bus.disk.half_track / 2)
+                } else {
+                    "D:--".to_string()
+                };
+                let fast_label = if apple.is_fast_disk() { " FAST" } else { "" };
+                let status = format!(
+                    " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{} EMU:{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
+                    cpu.pc(),
+                    cpu.a(),
+                    cpu.x(),
+                    cpu.y(),
+                    cpu.sp(),
+                    cpu.p().0,
+                    mode,
+                    disk_status,
+                    fast_label,
+                    emu_mhz
+                );
+                let status_rect = Rect::new(display_rect.x, status_y, display_rect.width, 1);
+                let status_bar = Paragraph::new(Line::from(Span::styled(
+                    status,
+                    Style::default().fg(Color::Cyan),
+                )));
+                frame.render_widget(status_bar, status_rect);
+            }
+        })?;
+
+        self.last_render_time = Instant::now();
+        Ok(())
+    }
+}
+
+fn main() -> io::Result<()> {
+    let cli = cli::parse();
+
+    terminal::enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut app = TuiApp::new(&cli)?;
+
+    let frame_duration = Duration::from_micros(NORMAL_RENDER_INTERVAL_US);
+
+    loop {
+        let frame_start = Instant::now();
+
+        if app.handle_input()? {
+            break;
+        }
+
+        app.run_emulation();
+        app.update_perf();
+        app.render(&mut terminal)?;
+
         let elapsed = frame_start.elapsed();
         if elapsed < frame_duration {
             std::thread::sleep(frame_duration - elapsed);
         }
     }
+
+    terminal::disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
+
+    Ok(())
 }
