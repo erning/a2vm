@@ -370,6 +370,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        let _ = self.apple.bus.disk.flush_all_drives();
         if self.status_printed {
             eprintln!();
         }
