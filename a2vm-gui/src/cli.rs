@@ -50,6 +50,12 @@ pub(crate) struct CliArgs {
         help = "Display mode: color, mono, or mono-scanlines"
     )]
     pub(crate) color_mode: CliColorMode,
+    #[arg(
+        long = "noise",
+        default_value_t = false,
+        help = "Enable realistic mechanical noise simulation"
+    )]
+    pub(crate) noise: bool,
 }
 
 pub(crate) fn parse() -> CliArgs {

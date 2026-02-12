@@ -5,6 +5,7 @@ pub mod disk;
 pub mod error;
 pub mod keyboard;
 pub mod machine;
+pub mod mechanical;
 pub mod memory;
 pub mod timing;
 pub mod video;

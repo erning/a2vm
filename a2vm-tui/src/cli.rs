@@ -23,6 +23,12 @@ pub(crate) struct CliArgs {
         help = "Enable DOS 3.3 RWTS fast path for all mounted drives"
     )]
     pub(crate) fast_disk: bool,
+    #[arg(
+        long = "noise",
+        default_value_t = false,
+        help = "Enable realistic mechanical noise simulation"
+    )]
+    pub(crate) noise: bool,
 }
 
 pub(crate) fn parse() -> CliArgs {

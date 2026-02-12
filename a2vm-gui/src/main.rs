@@ -12,10 +12,16 @@ use winit::window::{Window, WindowId};
 #[cfg(feature = "audio")]
 use rodio::buffer::SamplesBuffer;
 #[cfg(feature = "audio")]
-use rodio::{OutputStream, OutputStreamBuilder, Sink};
+use rodio::source::Source;
+#[cfg(feature = "audio")]
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
+#[cfg(feature = "audio")]
+use std::io::Cursor;
 
 use a2vm_core::keyboard::{map_apple_key, AppleKey};
 use a2vm_core::machine::AppleII;
+#[cfg(feature = "audio")]
+use a2vm_core::mechanical::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
 use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
 
@@ -71,8 +77,15 @@ struct App {
     #[cfg(feature = "audio")]
     audio_buffer: Vec<f32>,
 
+    // Mechanical noise
+    #[cfg(feature = "audio")]
+    mech_sink: Option<Sink>,
+    #[cfg(feature = "audio")]
+    mech_tracker: DiskMechTracker,
+
     #[allow(dead_code)]
     fast_disk: bool,
+    noise: bool,
     modifiers: ModifiersState,
     status_printed: bool,
     color_mode: DisplayColorMode,
@@ -104,12 +117,14 @@ impl App {
 
         // Audio setup (best-effort)
         #[cfg(feature = "audio")]
-        let (audio_stream, audio_sink) = match OutputStreamBuilder::open_default_stream() {
+        let (audio_stream, audio_sink, mech_sink) = match OutputStreamBuilder::open_default_stream()
+        {
             Ok(stream) => {
-                let sink = Sink::connect_new(stream.mixer());
-                (Some(stream), Some(sink))
+                let speaker_sink = Sink::connect_new(stream.mixer());
+                let mech_sink = Sink::connect_new(stream.mixer());
+                (Some(stream), Some(speaker_sink), Some(mech_sink))
             }
-            Err(_) => (None, None),
+            Err(_) => (None, None, None),
         };
 
         let now = Instant::now();
@@ -133,7 +148,12 @@ impl App {
             audio_sink,
             #[cfg(feature = "audio")]
             audio_buffer: Vec::with_capacity(4096),
+            #[cfg(feature = "audio")]
+            mech_sink,
+            #[cfg(feature = "audio")]
+            mech_tracker: DiskMechTracker::new(),
             fast_disk: cli.fast_disk,
+            noise: cli.noise,
             modifiers: ModifiersState::empty(),
             status_printed: false,
             color_mode: cli.color_mode.into(),
@@ -177,6 +197,35 @@ impl App {
                         AUDIO_SAMPLE_RATE,
                         std::mem::take(&mut self.audio_buffer),
                     ));
+                }
+            }
+
+            #[cfg(feature = "audio")]
+            if self.noise {
+                if let Some(ref sink) = self.mech_sink {
+                    let event = self
+                        .mech_tracker
+                        .check(self.apple.bus.disk.motor_on, self.apple.bus.disk.half_track);
+                    if let Some(evt) = event {
+                        match evt {
+                            MechanicalEvent::MotorStart => {
+                                let cursor = Cursor::new(MOVE_ARM_WAV);
+                                if let Ok(source) = Decoder::new(cursor) {
+                                    sink.append(source.repeat_infinite());
+                                }
+                            }
+                            MechanicalEvent::TrackSeek => {
+                                sink.stop();
+                                let cursor = Cursor::new(MOVE_ARM_WAV);
+                                if let Ok(source) = Decoder::new(cursor) {
+                                    sink.append(source.repeat_infinite());
+                                }
+                            }
+                            MechanicalEvent::MotorStop => {
+                                sink.stop();
+                            }
+                        }
+                    }
                 }
             }
         }

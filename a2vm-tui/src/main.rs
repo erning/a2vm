@@ -13,10 +13,16 @@ use ratatui::Terminal;
 #[cfg(feature = "audio")]
 use rodio::buffer::SamplesBuffer;
 #[cfg(feature = "audio")]
-use rodio::{OutputStream, OutputStreamBuilder, Sink};
+use rodio::source::Source;
+#[cfg(feature = "audio")]
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
+#[cfg(feature = "audio")]
+use std::io::Cursor;
 
 use a2vm_core::keyboard::{map_apple_key, AppleKey};
 use a2vm_core::machine::AppleII;
+#[cfg(feature = "audio")]
+use a2vm_core::mechanical::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
 use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, BITMAP_HEIGHT, BITMAP_SIZE, BITMAP_STRIDE, BITMAP_WIDTH};
 
@@ -139,17 +145,24 @@ fn main() -> io::Result<()> {
 
     apple.reset();
 
+    let noise = cli.noise;
+
     // Set up audio playback (best-effort).
     #[cfg(feature = "audio")]
-    let mut audio: Option<(OutputStream, Sink)> = match OutputStreamBuilder::open_default_stream() {
-        Ok(stream_handle) => {
-            let sink = Sink::connect_new(stream_handle.mixer());
-            Some((stream_handle, sink))
-        }
-        Err(_) => None,
-    };
+    let (audio, mech_sink): (Option<(OutputStream, Sink)>, Option<Sink>) =
+        match OutputStreamBuilder::open_default_stream() {
+            Ok(stream) => {
+                let speaker_sink = Sink::connect_new(stream.mixer());
+                let mech = Sink::connect_new(stream.mixer());
+                (Some((stream, speaker_sink)), Some(mech))
+            }
+            Err(_) => (None, None),
+        };
     #[cfg(not(feature = "audio"))]
     let _audio: () = ();
+
+    #[cfg(feature = "audio")]
+    let mut mech_tracker = DiskMechTracker::new();
 
     // Set up terminal
     terminal::enable_raw_mode()?;
@@ -233,7 +246,7 @@ fn main() -> io::Result<()> {
             apple.run_cycles(cycles_to_run);
 
             #[cfg(feature = "audio")]
-            if let Some((_, sink)) = &mut audio {
+            if let Some((_, sink)) = &audio {
                 apple.take_audio_samples_into(AUDIO_SAMPLE_RATE, real_cycles, &mut audio_buffer);
                 if !audio_buffer.is_empty() {
                     sink.append(SamplesBuffer::new(
@@ -241,6 +254,34 @@ fn main() -> io::Result<()> {
                         AUDIO_SAMPLE_RATE,
                         std::mem::take(&mut audio_buffer),
                     ));
+                }
+            }
+
+            #[cfg(feature = "audio")]
+            if noise {
+                if let Some(ref sink) = mech_sink {
+                    let event =
+                        mech_tracker.check(apple.bus.disk.motor_on, apple.bus.disk.half_track);
+                    if let Some(evt) = event {
+                        match evt {
+                            MechanicalEvent::MotorStart => {
+                                let cursor = Cursor::new(MOVE_ARM_WAV);
+                                if let Ok(source) = Decoder::new(cursor) {
+                                    sink.append(source.repeat_infinite());
+                                }
+                            }
+                            MechanicalEvent::TrackSeek => {
+                                sink.stop();
+                                let cursor = Cursor::new(MOVE_ARM_WAV);
+                                if let Ok(source) = Decoder::new(cursor) {
+                                    sink.append(source.repeat_infinite());
+                                }
+                            }
+                            MechanicalEvent::MotorStop => {
+                                sink.stop();
+                            }
+                        }
+                    }
                 }
             }
         }
