@@ -3,11 +3,12 @@ members = ["a2vm-core", "a2vm-oxide", "a2vm-tui", "a2vm-gui"]
 resolver = "2"
 
 [workspace.dependencies]
-a2vm-core = { path = "a2vm-core" }
-a2vm-oxide = { path = "a2vm-oxide" }
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+rodio = { version = "0.21" }
 ratatui = "0.30"
 crossterm = "0.29"
 pixels = "0.15"
 winit = "0.30"
-rodio = { version = "0.21" }
+tempfile = "3"
+a2vm-core = { path = "a2vm-core" }
+a2vm-oxide = { path = "a2vm-oxide", default-features = false }

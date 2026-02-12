@@ -9,21 +9,9 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
-#[cfg(feature = "audio")]
-use rodio::buffer::SamplesBuffer;
-#[cfg(feature = "audio")]
-use rodio::source::Source;
-#[cfg(feature = "audio")]
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
-#[cfg(feature = "audio")]
-use std::io::Cursor;
-
 use a2vm_core::keyboard::{map_apple_key, AppleKey};
-use a2vm_core::machine::AppleII;
-use a2vm_core::timing::CPU_HZ;
 use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
-#[cfg(feature = "audio")]
-use a2vm_oxide::noise::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
+use a2vm_oxide::runner::EmulatorRunner;
 
 mod cli;
 use crate::cli::CliArgs;
@@ -35,264 +23,73 @@ const FB_HEIGHT: u32 = RGBA_HEIGHT as u32; // 192
 /// Default window scale.
 const SCALE: u32 = 3;
 
-/// Turbo multiplier.
-const TURBO_MULTIPLIER: u64 = 4;
-
 /// Frame interval (~60 FPS).
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// Flash half-period for text blinking.
 const FLASH_HALF_PERIOD_MS: u128 = 267;
 
-/// Perf measurement interval.
-const PERF_SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
-
-/// PCM output sample rate.
-#[cfg(feature = "audio")]
-const AUDIO_SAMPLE_RATE: u32 = 44_100;
-
 // ── App ─────────────────────────────────────────────────────────────
 
 struct App {
-    apple: AppleII,
+    runner: EmulatorRunner,
     pixels: Option<Pixels<'static>>,
     window: Option<Arc<Window>>,
 
-    // Timing
+    // Rendering state
     boot_time: Instant,
-    last_tick: Instant,
-    cycle_accum: u128,
-    turbo: bool,
-    emu_mhz: f64,
-    perf_last_time: Instant,
-    perf_last_cycles: u64,
     flash_on: bool,
     last_flash_on: bool,
-
-    // Audio
-    #[cfg(feature = "audio")]
-    _audio_stream: Option<OutputStream>,
-    #[cfg(feature = "audio")]
-    audio_sink: Option<Sink>,
-    #[cfg(feature = "audio")]
-    audio_buffer: Vec<f32>,
-
-    // Mechanical noise
-    #[cfg(feature = "audio")]
-    mech_sink: Option<Sink>,
-    #[cfg(feature = "audio")]
-    mech_tracker: DiskMechTracker,
-
-    #[allow(dead_code)]
-    fast_disk: bool,
-    #[cfg(feature = "audio")]
-    noise: bool,
-    modifiers: ModifiersState,
-    status_printed: bool,
     color_mode: DisplayColorMode,
     frame_phase: u64,
+
+    // Status output
+    status_printed: bool,
+    modifiers: ModifiersState,
 }
 
 impl App {
-    fn new(cli: &CliArgs) -> Self {
-        let mut apple = AppleII::new();
-        let rom_data = cli.shared.rom_data().unwrap_or_else(|e| {
-            eprintln!("Error loading ROM: {e}");
-            std::process::exit(1);
-        });
-        apple.load_rom_data(&rom_data).unwrap_or_else(|e| {
-            eprintln!("Error loading ROM: {e}");
-            std::process::exit(1);
-        });
+    fn new(cli: &CliArgs) -> Result<Self, Box<dyn std::error::Error>> {
+        let rom_data = cli.shared.rom_data()?;
 
-        apple.set_disk_controller_enabled(!cli.shared.disk.is_empty());
-
-        for (drive, disk) in cli.shared.disk.iter().enumerate() {
-            apple.load_disk_into_drive(disk, drive).unwrap_or_else(|e| {
-                eprintln!("Error loading disk: {e}");
-                std::process::exit(1);
-            });
-        }
-
-        if cli.shared.fast_disk {
-            apple.set_fast_disk(true);
-        }
-
-        apple.reset();
+        let disk_paths: Vec<&std::path::Path> =
+            cli.shared.disk.iter().map(|p| p.as_path()).collect();
 
         #[cfg(feature = "audio")]
-        let (audio_stream, audio_sink, mech_sink) = match OutputStreamBuilder::open_default_stream()
-        {
-            Ok(stream) => {
-                let speaker_sink = Sink::connect_new(stream.mixer());
-                let mech_sink = Sink::connect_new(stream.mixer());
-                (Some(stream), Some(speaker_sink), Some(mech_sink))
-            }
-            Err(_) => (None, None, None),
+        let runner = match EmulatorRunner::new(
+            rom_data,
+            &disk_paths,
+            cli.shared.fast_disk,
+            cli.shared.noise,
+        ) {
+            Ok(r) => r,
+            Err(e) => return Err(format!("Failed to create emulator: {e}").into()),
         };
 
-        let now = Instant::now();
+        #[cfg(not(feature = "audio"))]
+        let runner = match EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk) {
+            Ok(r) => r,
+            Err(e) => return Err(format!("Failed to create emulator: {e}").into()),
+        };
 
-        App {
-            apple,
+        Ok(Self {
+            runner,
             pixels: None,
             window: None,
-            boot_time: now,
-            last_tick: now,
-            cycle_accum: 0,
-            turbo: false,
-            emu_mhz: 0.0,
-            perf_last_time: now,
-            perf_last_cycles: 0,
+            boot_time: Instant::now(),
             flash_on: false,
             last_flash_on: false,
-            #[cfg(feature = "audio")]
-            _audio_stream: audio_stream,
-            #[cfg(feature = "audio")]
-            audio_sink,
-            #[cfg(feature = "audio")]
-            audio_buffer: Vec::with_capacity(4096),
-            #[cfg(feature = "audio")]
-            mech_sink,
-            #[cfg(feature = "audio")]
-            mech_tracker: DiskMechTracker::new(),
-            fast_disk: cli.shared.fast_disk,
-            #[cfg(feature = "audio")]
-            noise: cli.shared.noise,
-            modifiers: ModifiersState::empty(),
-            status_printed: false,
             color_mode: cli.color_mode.into(),
             frame_phase: 0,
-        }
-    }
-
-    fn run_emulation(&mut self) {
-        let now = Instant::now();
-        let mut dt = now.saturating_duration_since(self.last_tick);
-        self.last_tick = now;
-
-        // Cap dt to avoid spiral of death
-        if dt > Duration::from_millis(100) {
-            dt = Duration::from_millis(100);
-        }
-
-        self.cycle_accum += dt.as_nanos() * CPU_HZ as u128;
-        let real_cycles = (self.cycle_accum / 1_000_000_000) as u64;
-        self.cycle_accum %= 1_000_000_000;
-
-        let mut cycles_to_run = real_cycles;
-        if self.turbo {
-            cycles_to_run = cycles_to_run.saturating_mul(TURBO_MULTIPLIER);
-        }
-
-        if cycles_to_run != 0 {
-            self.apple.run_cycles(cycles_to_run);
-
-            #[cfg(feature = "audio")]
-            if let Some(ref sink) = self.audio_sink {
-                self.audio_buffer.clear();
-                self.apple.take_audio_samples_into(
-                    AUDIO_SAMPLE_RATE,
-                    real_cycles,
-                    &mut self.audio_buffer,
-                );
-                if !self.audio_buffer.is_empty() {
-                    sink.append(SamplesBuffer::new(
-                        1,
-                        AUDIO_SAMPLE_RATE,
-                        std::mem::take(&mut self.audio_buffer),
-                    ));
-                }
-            }
-
-            #[cfg(feature = "audio")]
-            if self.noise {
-                if let Some(ref sink) = self.mech_sink {
-                    let event = self
-                        .mech_tracker
-                        .check(self.apple.bus.disk.motor_on, self.apple.bus.disk.half_track);
-                    if let Some(evt) = event {
-                        match evt {
-                            MechanicalEvent::MotorStart => {
-                                let cursor = Cursor::new(MOVE_ARM_WAV);
-                                if let Ok(source) = Decoder::new(cursor) {
-                                    sink.append(source.repeat_infinite());
-                                }
-                            }
-                            MechanicalEvent::TrackSeek => {
-                                sink.stop();
-                                let cursor = Cursor::new(MOVE_ARM_WAV);
-                                if let Ok(source) = Decoder::new(cursor) {
-                                    sink.append(source.repeat_infinite());
-                                }
-                            }
-                            MechanicalEvent::MotorStop => {
-                                sink.stop();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let perf_now = Instant::now();
-        let perf_elapsed = perf_now.saturating_duration_since(self.perf_last_time);
-        if perf_elapsed >= PERF_SAMPLE_INTERVAL {
-            let delta_cycles = self
-                .apple
-                .cpu
-                .cycles()
-                .saturating_sub(self.perf_last_cycles);
-            let secs = perf_elapsed.as_secs_f64();
-            if secs > 0.0 {
-                self.emu_mhz = delta_cycles as f64 / secs / 1_000_000.0;
-            }
-            self.perf_last_cycles = self.apple.cpu.cycles();
-            self.perf_last_time = perf_now;
-
-            let cpu = &self.apple.cpu;
-            let mode = if self.apple.bus.display.text {
-                "TEXT"
-            } else if self.apple.bus.display.hires {
-                "HGR"
-            } else {
-                "GR"
-            };
-            let disk_status = if self.apple.bus.disk.motor_on {
-                format!("D:T{}", self.apple.bus.disk.half_track / 2)
-            } else {
-                "D:--".to_string()
-            };
-            let turbo_label = if self.turbo { " TURBO" } else { "" };
-            let fast_label = if self.apple.is_fast_disk() {
-                " FAST"
-            } else {
-                ""
-            };
-            eprint!(
-                "\rPC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
-                cpu.pc(),
-                cpu.a(),
-                cpu.x(),
-                cpu.y(),
-                cpu.sp(),
-                mode,
-                disk_status,
-                turbo_label,
-                fast_label,
-                self.emu_mhz
-            );
-            self.status_printed = true;
-        }
-
-        // Flash toggle
-        self.flash_on = ((self.boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
+            status_printed: false,
+            modifiers: ModifiersState::empty(),
+        })
     }
 
     fn render_frame(&mut self) {
         // Skip rendering if video RAM and display mode haven't changed
         // (scanline mode always re-renders due to animation)
-        let dirty = self.apple.bus.video_dirty
+        let dirty = self.runner.apple().bus.video_dirty
             || self.flash_on != self.last_flash_on
             || self.color_mode == DisplayColorMode::MonochromeScanlines;
         if !dirty {
@@ -304,7 +101,7 @@ impl App {
             }
             return;
         }
-        self.apple.bus.video_dirty = false;
+        self.runner.apple_mut().bus.video_dirty = false;
         self.last_flash_on = self.flash_on;
 
         let pixels = match self.pixels.as_mut() {
@@ -315,8 +112,8 @@ impl App {
         let frame = pixels.frame_mut();
 
         video::render_rgba(
-            self.apple.ram(),
-            &self.apple.bus.display,
+            self.runner.apple().ram(),
+            &self.runner.apple().bus.display,
             self.flash_on,
             self.color_mode,
             self.frame_phase,
@@ -327,6 +124,47 @@ impl App {
         if let Err(e) = pixels.render() {
             eprintln!("render: {e}");
         }
+    }
+
+    fn update_status(&mut self) {
+        // Update flash toggle
+        self.flash_on = ((self.boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
+
+        // Print status line to stderr (similar to TUI status bar)
+        let cpu = &self.runner.apple().cpu;
+        let mode = if self.runner.apple().bus.display.text {
+            "TEXT"
+        } else if self.runner.apple().bus.display.hires {
+            "HGR"
+        } else {
+            "GR"
+        };
+        let disk_status = if self.runner.apple().bus.disk.motor_on {
+            format!("D:T{}", self.runner.apple().bus.disk.half_track / 2)
+        } else {
+            "D:--".to_string()
+        };
+        let turbo_label = if self.runner.is_turbo() { " TURBO" } else { "" };
+        let fast_label = if self.runner.apple().is_fast_disk() {
+            " FAST"
+        } else {
+            ""
+        };
+
+        eprint!(
+            "\rPC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
+            cpu.pc(),
+            cpu.a(),
+            cpu.x(),
+            cpu.y(),
+            cpu.sp(),
+            mode,
+            disk_status,
+            turbo_label,
+            fast_label,
+            self.runner.emu_mhz()
+        );
+        self.status_printed = true;
     }
 
     fn handle_key(&mut self, event: &KeyEvent, event_loop: &ActiveEventLoop) {
@@ -351,11 +189,11 @@ impl App {
                         return;
                     }
                     "r" => {
-                        self.apple.reset();
+                        self.runner.reset();
                         return;
                     }
                     "t" => {
-                        self.turbo = !self.turbo;
+                        self.runner.toggle_turbo();
                         return;
                     }
                     _ => {}
@@ -365,14 +203,13 @@ impl App {
 
         // Map to Apple II ASCII
         if let Some(ascii) = map_winit_key(event, ctrl) {
-            self.apple.key_press(ascii);
+            self.runner.apple_mut().key_press(ascii);
         }
     }
 }
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = self.apple.bus.disk.flush_all_drives();
         if self.status_printed {
             eprintln!();
         }
@@ -398,7 +235,7 @@ fn map_winit_key(event: &KeyEvent, ctrl: bool) -> Option<u8> {
             NamedKey::Enter => map_apple_key(AppleKey::Enter),
             NamedKey::Backspace => map_apple_key(AppleKey::Backspace),
             NamedKey::Delete => map_apple_key(AppleKey::Delete),
-            NamedKey::Space => map_apple_key(AppleKey::Space),
+            NamedKey::Space => map_apple_key(AppleKey::Printable(' ')),
             NamedKey::ArrowLeft => map_apple_key(AppleKey::Left),
             NamedKey::ArrowRight => map_apple_key(AppleKey::Right),
             NamedKey::ArrowUp => map_apple_key(AppleKey::Up),
@@ -469,8 +306,13 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        self.run_emulation();
+        // Run emulation tick
+        self.runner.tick();
 
+        // Update status line
+        self.update_status();
+
+        // Request redraw
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
@@ -483,7 +325,13 @@ impl ApplicationHandler for App {
 
 fn main() {
     let cli = cli::parse();
-    let mut app = App::new(&cli);
+    let mut app = match App::new(&cli) {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("Error initializing A2VM: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let event_loop = EventLoop::new().expect("create event loop");
     event_loop.run_app(&mut app).expect("run event loop");

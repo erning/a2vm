@@ -23,6 +23,7 @@ name = "a2vm-oxide"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rodio",
 ]
 
 [[package]]
