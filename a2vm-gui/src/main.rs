@@ -85,6 +85,7 @@ struct App {
 
     #[allow(dead_code)]
     fast_disk: bool,
+    #[cfg(feature = "audio")]
     noise: bool,
     modifiers: ModifiersState,
     status_printed: bool,
@@ -156,6 +157,7 @@ impl App {
             #[cfg(feature = "audio")]
             mech_tracker: DiskMechTracker::new(),
             fast_disk: cli.shared.fast_disk,
+            #[cfg(feature = "audio")]
             noise: cli.shared.noise,
             modifiers: ModifiersState::empty(),
             status_printed: false,
