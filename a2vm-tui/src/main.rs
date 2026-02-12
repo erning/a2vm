@@ -397,6 +397,12 @@ impl TuiApp {
     }
 }
 
+impl Drop for TuiApp {
+    fn drop(&mut self) {
+        let _ = self.apple.bus.disk.flush_all_drives();
+    }
+}
+
 struct TerminalGuard;
 
 impl Drop for TerminalGuard {
@@ -436,8 +442,6 @@ fn main() -> io::Result<()> {
             std::thread::sleep(frame_duration - elapsed);
         }
     }
-
-    let _ = app.apple.bus.disk.flush_all_drives();
 
     Ok(())
 }

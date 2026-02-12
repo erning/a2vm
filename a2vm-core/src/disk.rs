@@ -260,7 +260,9 @@ impl DiskII {
             0x07 => self.set_phase(3, true),
             0x08 => {
                 if self.motor_on {
-                    let _ = self.sync_nibble_to_raw(self.selected_drive);
+                    if let Err(e) = self.sync_nibble_to_raw(self.selected_drive) {
+                        eprintln!("disk: failed to sync drive {}: {e}", self.selected_drive);
+                    }
                 }
                 self.motor_on = false;
                 self.data_ready = false;
