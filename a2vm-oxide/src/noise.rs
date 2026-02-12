@@ -1,4 +1,4 @@
-pub const MOVE_ARM_WAV: &[u8] = include_bytes!("../../assets/move_arm.wav");
+pub const MOVE_ARM_WAV: &[u8] = include_bytes!("../assets/move_arm.wav");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MechanicalEvent {

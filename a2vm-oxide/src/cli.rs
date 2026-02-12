@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 /// Embedded Apple II+ ROM (20K).
-pub const DEFAULT_ROM: &[u8] = include_bytes!("../../roms/apple2p.rom");
+pub const DEFAULT_ROM: &[u8] = include_bytes!("../assets/apple2p.rom");
 
 /// Shared arguments for all A2VM frontends.
 #[derive(Args)]

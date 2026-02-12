@@ -20,54 +20,7 @@
 
 ## Project Structure
 
-```
-a2vm/
-├── Cargo.toml              # Workspace root (4 crates)
-├── roms/                   # ROM files (embedded in a2vm-oxide)
-│   └── apple2p.rom         # Default 20K Apple II+ ROM
-├── assets/                 # Audio assets
-│   ├── move_arm.wav        # Disk stepper motor (embedded in a2vm-oxide)
-│   ├── disk_insertion.wav
-│   ├── disk_removal.wav
-│   ├── pop_on.wav
-│   └── pop_off.wav
-├── a2vm-core/              # Core emulation library
-│   ├── src/
-│   │   ├── lib.rs          # Exports: audio, bus, cpu, disk, error, keyboard, machine, memory, timing, video
-│   │   ├── audio.rs        # Speaker synthesis (toggle timestamps -> PCM)
-│   │   ├── bus.rs          # Bus trait for CPU-device communication
-│   │   ├── disk.rs         # Disk II controller + RWTS trap
-│   │   ├── error.rs        # Error types
-│   │   ├── keyboard.rs     # Apple II key mapping
-│   │   ├── machine.rs      # AppleII system + BusState, load_rom_data()
-│   │   ├── memory.rs       # FlatMemory for CPU tests
-│   │   ├── timing.rs       # CPU_HZ constant
-│   │   ├── video.rs        # TEXT/GR/HGR renderer
-│   │   └── cpu/            # 6502 implementation
-│   │       ├── mod.rs      # Cpu struct, step(), interrupts
-│   │       ├── opcodes.rs  # Mnemonic enum, OPCODES table
-│   │       ├── addressing.rs # 13 addressing modes
-│   │       ├── disasm.rs   # Disassembler
-│   │       ├── status.rs   # Status register (P)
-│   │       └── tests.rs    # BCD arithmetic tests
-│   └── tests/
-│       └── klaus_dormann.rs # 6502 functional test
-├── a2vm-oxide/             # Shared frontend resources
-│   ├── src/
-│   │   ├── lib.rs          # Exports: cli, noise
-│   │   ├── cli.rs          # SharedArgs, DEFAULT_ROM
-│   │   └── noise.rs        # DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV
-├── a2vm-tui/               # Terminal frontend
-│   ├── src/
-│   │   ├── main.rs         # TuiApp struct, Braille display
-│   │   └── cli.rs          # Clap CLI, uses SharedArgs
-├── a2vm-gui/               # Graphical frontend
-│   ├── src/
-│   │   ├── main.rs         # App struct, pixels+wgpu
-│   │   └── cli.rs          # Clap CLI, uses SharedArgs + color-mode
-└── docs/
-    └── architecture.md
-```
+详细目录结构见 [docs/architecture.md](docs/architecture.md)。
 
 ## Key Conventions
 

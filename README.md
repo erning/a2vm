@@ -13,8 +13,8 @@ An Apple II/II+ emulator written in Rust featuring both terminal (TUI) and graph
   - **TUI**: Terminal UI with Braille characters (140×48) using ratatui
   - **GUI**: Native GPU-accelerated window with authentic Apple II colors plus monochrome CRT modes (`color`, `mono`, `mono-scanlines`)
 - **Keyboard Input**: Full ASCII keyboard support with Apple II key mapping
-- **Clap-based CLI**: `--rom` with `A2VM_ROM` fallback, plus validated disk options
-- **ROM Support**: Loads Apple II/II+ ROM files (12K/20K)
+- **Clap-based CLI**: Optional `--rom` with embedded Apple II+ ROM as default
+- **ROM Support**: Loads Apple II/II+ ROM files (12K/20K), with embedded default
 
 ## Quick Start
 
@@ -27,24 +27,23 @@ cargo build --release -p a2vm-tui
 # Build without audio (if audio libraries are not available)
 cargo build --release -p a2vm-tui --no-default-features
 
-# Run with ROM only (enter Monitor)
-./target/release/a2vm-tui --rom roms/apple2p.rom
+# Run with embedded ROM (no external files needed)
+cargo run -p a2vm-tui
 
 # Run with a disk image
-./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
+cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk"
 
 # Fast-disk mode (global switch for all mounted drives)
-./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk
+cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk
 
 # With mechanical noise simulation
-./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --noise
+cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --noise
 
 # Mount two disks (drive 1 then drive 2)
-./target/release/a2vm-tui --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk"
+cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk"
 
-# Use A2VM_ROM environment variable to avoid typing --rom every time
-export A2VM_ROM=roms/apple2p.rom
-./target/release/a2vm-tui --disk "disks/Apple DOS 3.3 January 1983.dsk"
+# Run with custom ROM (optional)
+cargo run -p a2vm-tui -- --rom custom.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 ```
 
 ### GUI (Graphical UI)
@@ -56,17 +55,17 @@ cargo build --release -p a2vm-gui
 # Build without audio
 cargo build --release -p a2vm-gui --no-default-features
 
-# Run with ROM
-./target/release/a2vm-gui --rom roms/apple2p.rom
+# Run with embedded ROM (no external files needed)
+cargo run -p a2vm-gui
 
 # Run with monochrome scanline mode
-./target/release/a2vm-gui --rom roms/apple2p.rom --color-mode mono-scanlines
+cargo run -p a2vm-gui -- --color-mode mono-scanlines
 
 # Run with disk
-cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
+cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk"
 
 # Run with two disks + global fast-disk + mechanical noise
-cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk" --fast-disk --noise
+cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk" --fast-disk --noise
 ```
 
 ### Command Line Options
@@ -74,10 +73,10 @@ cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 Janu
 Shared options:
 
 ```
-a2vm-tui|a2vm-gui --rom <file> [--disk <file>]... [options]
+a2vm-tui|a2vm-gui [options]
 
 Options:
-  --rom <file>        Apple II/II+ ROM file (12K or 20K) [env: A2VM_ROM]
+  --rom <file>        Apple II/II+ ROM file (12K or 20K). Optional; uses embedded ROM if not specified.
   --disk <file>       .dsk disk image (143360 bytes), may be passed up to two times
   --fast-disk         Enable DOS 3.3 RWTS fast path for all mounted drives
   --noise             Enable realistic mechanical noise simulation
@@ -92,7 +91,7 @@ a2vm-gui ... [--color-mode <mode>]
   --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'
 ```
 
-- `--rom` is required; falls back to the `A2VM_ROM` environment variable
+- `--rom` is optional; embedded Apple II+ ROM is used by default
 - `--disk` can be omitted, provided once, or provided twice (first maps to drive 1, second to drive 2)
 - `--fast-disk` is a global switch that applies to all mounted drives
 - `--fast-disk` traps the DOS 3.3 RWTS entry point (`$B7B5`) and copies sector data directly from raw `.dsk` images, skipping nibble-level emulation. Best used with DOS 3.3 formatted disks
@@ -115,10 +114,10 @@ Both frontends use the same keyboard controls:
 ```
 a2vm/
 ├── a2vm-core/     # Core emulation library (CPU, memory, video, audio, disk)
-├── a2vm-oxide/    # Shared frontend resources (mechanical noise)
+├── a2vm-oxide/    # Shared frontend resources (mechanical noise, embedded ROM & assets)
+│   └── assets/    # Embedded assets (ROM, WAV files)
 ├── a2vm-tui/      # Terminal UI frontend (Braille display)
 ├── a2vm-gui/      # Graphical UI frontend (pixels + winit)
-├── assets/        # Audio assets (WAV files)
 └── docs/          # Documentation
 ```
 

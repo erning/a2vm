@@ -15,54 +15,53 @@ There is no Swift/FFI runtime in the current codebase.
 
 ```
 a2vm/
- |- Cargo.toml
- |- roms/
- |  `- apple2p.rom        # Default ROM (embedded in a2vm-oxide)
- |- assets/
- |  |- move_arm.wav        # Disk stepper motor (embedded in a2vm-oxide)
- |  |- disk_insertion.wav
- |  |- disk_removal.wav
- |  |- pop_on.wav
- |  |- pop_off.wav
- |- a2vm-core/
- |  |- Cargo.toml
- |  |- src/
- |  |  |- lib.rs
- |  |  |- audio.rs
- |  |  |- bus.rs
- |  |  |- disk.rs
- |  |  |- error.rs
- |  |  |- keyboard.rs
- |  |  |- machine.rs
- |  |  |- memory.rs
- |  |  |- timing.rs
- |  |  |- video.rs
- |  |  `- cpu/
- |  |     |- mod.rs
- |  |     |- opcodes.rs
- |  |     |- addressing.rs
- |  |     |- disasm.rs
- |  |     |- status.rs
- |  |     `- tests.rs
- |  `- tests/
- |     |- klaus_dormann.rs
- |     `- data/6502_functional_test.bin
- |- a2vm-oxide/
- |  |- Cargo.toml
- |  `- src/
- |     |- lib.rs
- |     |- cli.rs           # SharedArgs, DEFAULT_ROM
- |     `- noise.rs
- |- a2vm-tui/
- |  `- src/
- |     |- main.rs          # TuiApp struct
- |     `- cli.rs           # Uses SharedArgs
- |- a2vm-gui/
- |  `- src/
- |     |- main.rs          # App struct
- |     `- cli.rs           # Uses SharedArgs + color-mode
- `- docs/
-    `- architecture.md
+  |- Cargo.toml
+  |- a2vm-core/
+  |  |- Cargo.toml
+  |  |- src/
+  |  |  |- lib.rs
+  |  |  |- audio.rs
+  |  |  |- bus.rs
+  |  |  |- disk.rs
+  |  |  |- error.rs
+  |  |  |- keyboard.rs
+  |  |  |- machine.rs
+  |  |  |- memory.rs
+  |  |  |- timing.rs
+  |  |  |- video.rs
+  |  |  `- cpu/
+  |  |     |- mod.rs
+  |  |     |- opcodes.rs
+  |  |     |- addressing.rs
+  |  |     |- disasm.rs
+  |  |     |- status.rs
+  |  |     `- tests.rs
+  |  `- tests/
+  |     |- klaus_dormann.rs
+  |     `- data/6502_functional_test.bin
+  |- a2vm-oxide/
+  |  |- Cargo.toml
+  |  |- assets/
+  |  |  |- apple2p.rom     # Default ROM (embedded)
+  |  |  |- move_arm.wav    # Disk stepper motor
+  |  |  |- disk_insertion.wav
+  |  |  |- disk_removal.wav
+  |  |  |- pop_on.wav
+  |  |  `- pop_off.wav
+  |  `- src/
+  |     |- lib.rs
+  |     |- cli.rs           # SharedArgs, DEFAULT_ROM
+  |     `- noise.rs
+  |- a2vm-tui/
+  |  `- src/
+  |     |- main.rs          # TuiApp struct
+  |     `- cli.rs           # Uses SharedArgs
+  |- a2vm-gui/
+  |  `- src/
+  |     |- main.rs          # App struct
+  |     `- cli.rs           # Uses SharedArgs + color-mode
+  `- docs/
+     `- architecture.md
 ```
 
 ## Runtime Architecture
