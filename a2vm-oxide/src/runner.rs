@@ -350,11 +350,3 @@ impl Drop for EmulatorRunner {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_tick_accumulates_cycles() {
-        // This is a basic smoke test - full testing requires ROM data
-        // In practice, the runner is tested via the TUI/GUI integration
-    }
-}

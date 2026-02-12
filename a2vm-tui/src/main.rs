@@ -71,9 +71,9 @@ fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
                 }
             }
 
-            // 0x2800-0x28FF is the Braille Patterns Unicode block
-            // bits is 0-255, so this is always a valid char
-            let ch = unsafe { char::from_u32_unchecked(0x2800 + bits as u32) };
+            // 0x2800-0x28FF is the Braille Patterns Unicode block;
+            // bits is 0..=255, so the unwrap is infallible.
+            let ch = char::from_u32(0x2800 + bits as u32).unwrap();
             line.push(ch);
         }
         lines.push(line);

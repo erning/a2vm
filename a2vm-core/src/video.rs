@@ -256,6 +256,7 @@ fn set_pixel(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize) {
 
 /// Fill a solid rectangle in the bitmap.
 fn fill_rect(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize, w: usize, h: usize) {
+    debug_assert!(w > 0 && w <= 8, "fill_rect width must be 1..=8, got {w}");
     for dy in 0..h {
         let row_start = (y + dy) * BITMAP_STRIDE;
         let start_byte = row_start + x / 8;
@@ -615,8 +616,8 @@ pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: u
         } else if (0x40..0x60).contains(&ascii) {
             (ascii - 0x40) as usize
         } else if (0x60..0x80).contains(&ascii) {
-            // Map lowercase to same glyphs as uppercase
-            ((ascii - 0x60) + 0x40 - 0x40) as usize
+            // Map lowercase to same glyphs as uppercase (a=1, b=2, ... same as A, B, ...)
+            (ascii - 0x60) as usize
         } else {
             0
         };
