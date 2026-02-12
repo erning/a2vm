@@ -95,27 +95,30 @@ struct App {
 impl App {
     fn new(cli: &CliArgs) -> Self {
         let mut apple = AppleII::new();
-        apple.load_rom(&cli.rom).unwrap_or_else(|e| {
+        let rom_data = cli.shared.rom_data().unwrap_or_else(|e| {
+            eprintln!("Error loading ROM: {e}");
+            std::process::exit(1);
+        });
+        apple.load_rom_data(&rom_data).unwrap_or_else(|e| {
             eprintln!("Error loading ROM: {e}");
             std::process::exit(1);
         });
 
-        apple.set_disk_controller_enabled(!cli.disk.is_empty());
+        apple.set_disk_controller_enabled(!cli.shared.disk.is_empty());
 
-        for (drive, disk) in cli.disk.iter().enumerate() {
+        for (drive, disk) in cli.shared.disk.iter().enumerate() {
             apple.load_disk_into_drive(disk, drive).unwrap_or_else(|e| {
                 eprintln!("Error loading disk: {e}");
                 std::process::exit(1);
             });
         }
 
-        if cli.fast_disk {
+        if cli.shared.fast_disk {
             apple.set_fast_disk(true);
         }
 
         apple.reset();
 
-        // Audio setup (best-effort)
         #[cfg(feature = "audio")]
         let (audio_stream, audio_sink, mech_sink) = match OutputStreamBuilder::open_default_stream()
         {
@@ -152,8 +155,8 @@ impl App {
             mech_sink,
             #[cfg(feature = "audio")]
             mech_tracker: DiskMechTracker::new(),
-            fast_disk: cli.fast_disk,
-            noise: cli.noise,
+            fast_disk: cli.shared.fast_disk,
+            noise: cli.shared.noise,
             modifiers: ModifiersState::empty(),
             status_printed: false,
             color_mode: cli.color_mode.into(),

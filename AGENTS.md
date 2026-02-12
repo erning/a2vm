@@ -13,6 +13,7 @@
 | Keyboard mapping | `a2vm-core/src/keyboard.rs` | `AppleKey` enum, ASCII translation |
 | Shared timing | `a2vm-core/src/timing.rs` | `CPU_HZ` for cycle timing |
 | Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline + RGBA output |
+| Shared CLI args | `a2vm-oxide/src/cli.rs` | `SharedArgs` struct, embedded default ROM |
 | Mechanical noise | `a2vm-oxide/src/noise.rs` | Disk II motor/seek sound events |
 | TUI runtime | `a2vm-tui/src/main.rs`, `a2vm-tui/src/cli.rs` | Braille display (140×48), `TuiApp` struct |
 | GUI runtime | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | Native window (280×192), `App` struct |
@@ -22,6 +23,8 @@
 ```
 a2vm/
 ├── Cargo.toml              # Workspace root (4 crates)
+├── roms/                   # ROM files (embedded in a2vm-oxide)
+│   └── apple2p.rom         # Default 20K Apple II+ ROM
 ├── assets/                 # Audio assets
 │   ├── move_arm.wav        # Disk stepper motor (embedded in a2vm-oxide)
 │   ├── disk_insertion.wav
@@ -36,7 +39,7 @@ a2vm/
 │   │   ├── disk.rs         # Disk II controller + RWTS trap
 │   │   ├── error.rs        # Error types
 │   │   ├── keyboard.rs     # Apple II key mapping
-│   │   ├── machine.rs      # AppleII system + BusState
+│   │   ├── machine.rs      # AppleII system + BusState, load_rom_data()
 │   │   ├── memory.rs       # FlatMemory for CPU tests
 │   │   ├── timing.rs       # CPU_HZ constant
 │   │   ├── video.rs        # TEXT/GR/HGR renderer
@@ -51,16 +54,17 @@ a2vm/
 │       └── klaus_dormann.rs # 6502 functional test
 ├── a2vm-oxide/             # Shared frontend resources
 │   ├── src/
-│   │   ├── lib.rs          # Exports: noise
+│   │   ├── lib.rs          # Exports: cli, noise
+│   │   ├── cli.rs          # SharedArgs, DEFAULT_ROM
 │   │   └── noise.rs        # DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV
 ├── a2vm-tui/               # Terminal frontend
 │   ├── src/
 │   │   ├── main.rs         # TuiApp struct, Braille display
-│   │   └── cli.rs          # Clap CLI definition
+│   │   └── cli.rs          # Clap CLI, uses SharedArgs
 ├── a2vm-gui/               # Graphical frontend
 │   ├── src/
 │   │   ├── main.rs         # App struct, pixels+wgpu
-│   │   └── cli.rs          # Clap CLI definition
+│   │   └── cli.rs          # Clap CLI, uses SharedArgs + color-mode
 └── docs/
     └── architecture.md
 ```
@@ -69,7 +73,7 @@ a2vm/
 
 **CPU-Bus Pattern:** `AppleII` owns `Cpu` and `BusState` directly. CPU executes against mutable bus without temporary extraction patterns.
 
-**ROM Support:** Only Apple II / Apple II+ ROM sizes are accepted: 12K (`0x3000`) and 20K (`0x5000`).
+**ROM Support:** Only Apple II / Apple II+ ROM sizes are accepted: 12K (`0x3000`) and 20K (`0x5000`). Default ROM is embedded in `a2vm-oxide`.
 
 **Soft Switches:**
 - `$C010`: clears keyboard strobe
@@ -107,11 +111,14 @@ cargo build --release -p a2vm-tui
 # Build TUI without audio
 cargo build --release -p a2vm-tui --no-default-features
 
-# Run TUI with disk
+# Run TUI with embedded ROM (no external files needed)
+cargo run -p a2vm-tui
+
+# Run TUI with custom ROM + disk
 cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk"
 
 # TUI with fast-disk + mechanical noise
-cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk --noise
+cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk --noise
 
 # GUI --------------------------------------------------------
 
@@ -121,14 +128,14 @@ cargo build --release -p a2vm-gui
 # Build GUI without audio
 cargo build --release -p a2vm-gui --no-default-features
 
-# Run GUI
-cargo run -p a2vm-gui -- --rom roms/apple2p.rom
+# Run GUI with embedded ROM
+cargo run -p a2vm-gui
 
 # GUI with disk + monochrome scanlines
-cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --color-mode mono-scanlines
+cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --color-mode mono-scanlines
 
 # GUI with mechanical noise
-cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 January 1983.dsk" --noise
+cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --noise
 ```
 
 ### CLI Reference
@@ -136,10 +143,10 @@ cargo run -p a2vm-gui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 Janu
 Shared options:
 
 ```
-a2vm-tui|a2vm-gui --rom <file> [options]
+a2vm-tui|a2vm-gui [options]
 
-  --rom <file>        Apple II/II+ ROM (12K or 20K) [env: A2VM_ROM]
-  --disk <file>       .dsk disk image (143360 bytes), up to two times
+  --rom <FILE>        Apple II/II+ ROM (12K or 20K). Optional; uses embedded ROM if not specified.
+  --disk <FILE>       .dsk disk image (143360 bytes), up to two times
   --fast-disk         Enable DOS 3.3 RWTS trap ($B7B5) for all drives
   --noise             Enable realistic mechanical noise simulation
   -h, --help          Show this help
@@ -153,7 +160,7 @@ a2vm-gui ... [--color-mode <mode>]
   --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'
 ```
 
-- `--rom` required; falls back to `A2VM_ROM` env var
+- `--rom` is optional; embedded Apple II+ ROM is used by default
 - `--disk` can be provided zero, one, or two times (drive 1 then drive 2)
 - `--fast-disk` works best with DOS 3.3 formatted disks
 - `--noise` plays `move_arm.wav` looped during disk motor activity

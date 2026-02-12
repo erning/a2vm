@@ -5,7 +5,7 @@
 A2VM is a Rust workspace with one shared emulation core crate, one shared resources crate, and two frontend binaries.
 
 - `a2vm-core`: CPU, bus, machine integration, video, audio, disk, keyboard
-- `a2vm-oxide`: Shared frontend resources (mechanical noise simulation, embedded assets)
+- `a2vm-oxide`: Shared frontend resources (CLI arguments, embedded ROM, mechanical noise)
 - `a2vm-tui`: terminal frontend (Braille text-mode display + keyboard + optional audio)
 - `a2vm-gui`: native window frontend (pixels + winit + optional audio)
 
@@ -16,6 +16,8 @@ There is no Swift/FFI runtime in the current codebase.
 ```
 a2vm/
  |- Cargo.toml
+ |- roms/
+ |  `- apple2p.rom        # Default ROM (embedded in a2vm-oxide)
  |- assets/
  |  |- move_arm.wav        # Disk stepper motor (embedded in a2vm-oxide)
  |  |- disk_insertion.wav
@@ -49,15 +51,16 @@ a2vm/
  |  |- Cargo.toml
  |  `- src/
  |     |- lib.rs
+ |     |- cli.rs           # SharedArgs, DEFAULT_ROM
  |     `- noise.rs
  |- a2vm-tui/
  |  `- src/
  |     |- main.rs          # TuiApp struct
- |     `- cli.rs
+ |     `- cli.rs           # Uses SharedArgs
  |- a2vm-gui/
  |  `- src/
  |     |- main.rs          # App struct
- |     `- cli.rs
+ |     `- cli.rs           # Uses SharedArgs + color-mode
  `- docs/
     `- architecture.md
 ```
@@ -72,15 +75,15 @@ TUI (crossterm/ratatui)  GUI (winit/pixels)
           +-----------+-------------+
           |                         |
      a2vm-oxide                a2vm-core
-   (noise assets)                   |
-                      +------------+------------+
-                      |            |            |
-                     CPU        Machine         Bus
-                      |            |            |
-                      +---> Video / Audio / Disk <---+
+   (cli + noise                     |
+    + embedded                +------------+------------+
+     assets)                  |            |            |
+                             CPU        Machine         Bus
+                               |            |            |
+                               +---> Video / Audio / Disk <---+
 ```
 
-Both frontends own an `AppleII` machine instance and run the same emulation APIs. The `a2vm-oxide` crate provides shared frontend resources like mechanical noise simulation.
+Both frontends own an `AppleII` machine instance and run the same emulation APIs. The `a2vm-oxide` crate provides shared frontend resources including CLI argument parsing and embedded assets.
 
 ## Core Modules
 
@@ -110,6 +113,8 @@ Important behavior:
 
 - `step()` executes one instruction and ticks disk timing hook
 - `run_cycles()` supports fast-disk execution path with RWTS trap
+- `load_rom(path)` loads ROM from file path
+- `load_rom_data(data)` loads ROM from byte slice (used by embedded ROM)
 - keyboard latch and strobe semantics at `$C000/$C010`
 - speaker toggle at `$C030`
 - display soft-switches at `$C050-$C057`
@@ -162,6 +167,15 @@ Typed core error enum for ROM/disk operations.
 
 ## Shared Resources (a2vm-oxide)
 
+### cli.rs
+
+Shared CLI arguments and embedded default ROM.
+
+- `SharedArgs`: common arguments (`--rom`, `--disk`, `--fast-disk`, `--noise`)
+- `DEFAULT_ROM`: embedded Apple II+ ROM (20K)
+- `rom_data()`: returns ROM data from file or embedded default
+- frontends use `#[command(flatten)]` to include SharedArgs
+
 ### noise.rs
 
 Disk II mechanical noise simulation.
@@ -175,20 +189,22 @@ Disk II mechanical noise simulation.
 
 ### a2vm-tui
 
-- clap-based CLI argument parsing (`--rom`, repeatable `--disk` up to two, `--fast-disk`, `--noise`) in `src/cli.rs`
+- clap-based CLI using `SharedArgs` from `a2vm-oxide`
 - `TuiApp` struct encapsulates emulation state, timing, audio, and display
 - terminal rendering through Braille conversion (140×48 effective resolution)
 - keyboard mapping to Apple II ASCII
 - optional audio playback with rodio (speaker + mechanical noise)
+- can run without external files (uses embedded ROM)
 
 ### a2vm-gui
 
-- clap-based CLI argument parsing (`--rom`, repeatable `--disk` up to two, `--fast-disk`, `--noise`, `--color-mode`) in `src/cli.rs`
+- clap-based CLI using `SharedArgs` from `a2vm-oxide` plus `--color-mode`
 - `App` struct encapsulates emulation state, timing, audio, and display
 - native event loop with winit
 - framebuffer presentation with pixels (280×192 native resolution)
 - optional audio playback with rodio (speaker + mechanical noise)
 - color mode options: `color`, `mono`, `mono-scanlines`
+- can run without external files (uses embedded ROM)
 
 ## Testing Strategy
 
@@ -201,7 +217,7 @@ ROM/disk integration tests are resilient to missing external assets by returning
 
 ## Known Boundaries
 
-- TUI and GUI intentionally keep separate frontend-side timing/CLI definitions to allow independent evolution
+- TUI and GUI share CLI arguments via `a2vm-oxide::SharedArgs` but have frontend-specific options (`--color-mode` for GUI)
 - unofficial 6502 opcode coverage is partial; unsupported cases currently fall back to placeholder behavior
 - `Cpu` register fields are private and exposed via inline accessors for frontend status display
 - audio is optional via `--no-default-features` to allow builds without rodio/ALSA

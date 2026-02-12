@@ -133,17 +133,18 @@ struct TuiApp {
 impl TuiApp {
     fn new(cli: &cli::CliArgs) -> io::Result<Self> {
         let mut apple = AppleII::new();
-        apple.load_rom(&cli.rom).map_err(io::Error::other)?;
+        let rom_data = cli.shared.rom_data()?;
+        apple.load_rom_data(&rom_data).map_err(io::Error::other)?;
 
-        apple.set_disk_controller_enabled(!cli.disk.is_empty());
+        apple.set_disk_controller_enabled(!cli.shared.disk.is_empty());
 
-        for (drive, disk) in cli.disk.iter().enumerate() {
+        for (drive, disk) in cli.shared.disk.iter().enumerate() {
             apple
                 .load_disk_into_drive(disk, drive)
                 .map_err(io::Error::other)?;
         }
 
-        if cli.fast_disk {
+        if cli.shared.fast_disk {
             apple.set_fast_disk(true);
         }
 
@@ -182,7 +183,7 @@ impl TuiApp {
             mech_tracker: DiskMechTracker::new(),
             #[cfg(feature = "audio")]
             audio_buffer: Vec::with_capacity(4096),
-            noise: cli.noise,
+            noise: cli.shared.noise,
             bitmap: [0u8; BITMAP_SIZE],
             last_bitmap: [0u8; BITMAP_SIZE],
             braille_lines: vec!["".to_string(); BITMAP_HEIGHT / 4],

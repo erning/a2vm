@@ -186,10 +186,15 @@ impl AppleII {
     ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
     pub fn load_rom(&mut self, path: &Path) -> Result<()> {
         let data = std::fs::read(path)?;
+        self.load_rom_data(&data)
+    }
+
+    /// Load ROM data directly from a byte slice.
+    pub fn load_rom_data(&mut self, data: &[u8]) -> Result<()> {
         match data.len() {
             0x3000 => {
                 // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
-                self.bus.rom.copy_from_slice(&data);
+                self.bus.rom.copy_from_slice(data);
             }
             0x5000 => {
                 // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
