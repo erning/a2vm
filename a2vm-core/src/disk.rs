@@ -115,6 +115,12 @@ impl DiskII {
         self.slot_rom_loaded = true;
     }
 
+    /// Clear slot ROM data (for 12K ROM mode).
+    pub fn clear_slot_rom(&mut self) {
+        self.slot_rom.fill(0);
+        self.slot_rom_loaded = false;
+    }
+
     /// Read from slot ROM area ($C600-$C6FF).
     pub fn read_slot_rom(&self, addr: u16) -> u8 {
         if self.slot_rom_loaded {
@@ -253,6 +259,9 @@ impl DiskII {
             0x06 => self.set_phase(3, false),
             0x07 => self.set_phase(3, true),
             0x08 => {
+                if self.motor_on {
+                    let _ = self.sync_nibble_to_raw(self.selected_drive);
+                }
                 self.motor_on = false;
                 self.data_ready = false;
             }
@@ -367,6 +376,19 @@ impl DiskII {
             return false;
         }
         self.drives[drive].dirty
+    }
+
+    /// Flush a specific drive's nibble data to the raw image and persist to disk.
+    pub fn flush_drive(&mut self, drive: usize) -> Result<()> {
+        self.sync_nibble_to_raw(drive)
+    }
+
+    /// Flush all drives' nibble data to raw images and persist to disk.
+    pub fn flush_all_drives(&mut self) -> Result<()> {
+        for drive in 0..2 {
+            self.sync_nibble_to_raw(drive)?;
+        }
+        Ok(())
     }
 }
 
@@ -939,5 +961,55 @@ mod tests {
         assert!(matches!(result, Err(Error::DiskWriteProtected)));
 
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_motor_off_syncs_nibble_to_raw() {
+        let raw = vec![0u8; DSK_SIZE];
+        let path = write_temp_dsk(&raw);
+
+        let mut disk = DiskII::new();
+        disk.load_disk(&path, 0).unwrap();
+
+        disk.drives[0].write_protected = false;
+
+        disk.io_write(0xC0E9, 0x00);
+        disk.io_write(0xC0ED, 0x00);
+        disk.io_write(0xC0EF, 0x00);
+
+        for i in 0..10 {
+            disk.io_write(0xC0EF, (0xA0 + i) as u8);
+        }
+
+        assert!(disk.drives[0].dirty);
+
+        disk.io_write(0xC0E8, 0x00);
+
+        assert!(!disk.drives[0].dirty);
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn test_flush_all_drives() {
+        let raw1 = vec![0u8; DSK_SIZE];
+        let raw2 = vec![0xFFu8; DSK_SIZE];
+        let path1 = write_temp_dsk(&raw1);
+        let path2 = write_temp_dsk(&raw2);
+
+        let mut disk = DiskII::new();
+        disk.load_disk(&path1, 0).unwrap();
+        disk.load_disk(&path2, 1).unwrap();
+
+        disk.drives[0].dirty = true;
+        disk.drives[1].dirty = true;
+
+        disk.flush_all_drives().unwrap();
+
+        assert!(!disk.drives[0].dirty);
+        assert!(!disk.drives[1].dirty);
+
+        fs::remove_file(path1).unwrap();
+        fs::remove_file(path2).unwrap();
     }
 }

@@ -121,7 +121,9 @@ impl Bus for BusState {
         match addr {
             0x0000..=0xBFFF => {
                 self.ram[addr as usize] = val;
-                if (0x0400..0x6000).contains(&addr) {
+                let is_video_ram =
+                    (0x0400..0x0C00).contains(&addr) || (0x2000..0x6000).contains(&addr);
+                if is_video_ram {
                     self.video_dirty = true;
                 }
             }
@@ -195,6 +197,7 @@ impl AppleII {
             0x3000 => {
                 // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
                 self.bus.rom.copy_from_slice(data);
+                self.bus.disk.clear_slot_rom();
             }
             0x5000 => {
                 // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
@@ -256,7 +259,13 @@ impl AppleII {
             }
             self.cpu.cycles() - start
         } else {
-            self.cpu.run(&mut self.bus, target)
+            // Normal mode: step instruction by instruction to ensure disk.tick() is called
+            let start = self.cpu.cycles();
+            while self.cpu.cycles() - start < target {
+                let cycles = self.cpu.step(&mut self.bus);
+                self.bus.disk.tick(cycles);
+            }
+            self.cpu.cycles() - start
         }
     }
 
@@ -683,5 +692,23 @@ mod tests {
 
         fs::remove_file(rom_path).unwrap();
         fs::remove_file(disk_path).unwrap();
+    }
+
+    #[test]
+    fn test_12k_rom_clears_slot_rom() {
+        let mut rom_20k = vec![0u8; 0x5000];
+        rom_20k[0x1600] = 0xD5;
+        rom_20k[0x16FF] = 0xAA;
+
+        let mut apple = AppleII::new();
+        apple.load_rom_data(&rom_20k).unwrap();
+        apple.set_disk_controller_enabled(true);
+        assert_eq!(apple.read(0xC600), 0xD5);
+        assert_eq!(apple.read(0xC6FF), 0xAA);
+
+        let rom_12k = vec![0xAAu8; 0x3000];
+        apple.load_rom_data(&rom_12k).unwrap();
+        assert_eq!(apple.read(0xC600), 0x00);
+        assert_eq!(apple.read(0xC6FF), 0x00);
     }
 }

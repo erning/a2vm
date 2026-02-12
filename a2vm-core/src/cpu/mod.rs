@@ -158,10 +158,14 @@ impl Cpu {
         // Handle interrupts
         if self.nmi_pending {
             self.nmi_pending = false;
-            return self.handle_nmi(bus);
+            let cycles = self.handle_nmi(bus);
+            self.cycles += cycles as u64;
+            return cycles;
         }
         if self.irq_pending && !self.p.get(I) {
-            return self.handle_irq(bus);
+            let cycles = self.handle_irq(bus);
+            self.cycles += cycles as u64;
+            return cycles;
         }
 
         let instr_pc = self.pc;
@@ -921,7 +925,6 @@ impl Cpu {
         self.push(bus, self.p.to_push_byte(false));
         self.p.set(I, true);
         self.pc = bus.read_word(0xFFFA);
-        self.cycles += 7;
         7
     }
 
@@ -930,7 +933,6 @@ impl Cpu {
         self.push(bus, self.p.to_push_byte(false));
         self.p.set(I, true);
         self.pc = bus.read_word(0xFFFE);
-        self.cycles += 7;
         7
     }
 }

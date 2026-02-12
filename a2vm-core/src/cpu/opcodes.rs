@@ -185,11 +185,11 @@ pub static OPCODES: [OpcodeInfo; 256] = [
     ill(),                         // 80
     op(STA, IndirectX,  6, false), // 81
     ill(),                         // 82
-    ill(),                         // 83
+    op(SAX, IndirectX,  6, false), // 83 - SAX (A & X)
     op(STY, ZeroPage,   3, false), // 84
     op(STA, ZeroPage,   3, false), // 85
     op(STX, ZeroPage,   3, false), // 86
-    ill(),                         // 87
+    op(SAX, ZeroPage,   3, false), // 87 - SAX
     op(DEY, Implied,    2, false), // 88
     ill(),                         // 89
     op(TXA, Implied,    2, false), // 8A
@@ -197,7 +197,7 @@ pub static OPCODES: [OpcodeInfo; 256] = [
     op(STY, Absolute,   4, false), // 8C
     op(STA, Absolute,   4, false), // 8D
     op(STX, Absolute,   4, false), // 8E
-    ill(),                         // 8F
+    op(SAX, Absolute,   4, false), // 8F - SAX
 
     // 0x90
     op(BCC, Relative,   2, false), // 90

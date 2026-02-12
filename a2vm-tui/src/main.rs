@@ -122,6 +122,7 @@ struct TuiApp {
     mech_tracker: DiskMechTracker,
     #[cfg(feature = "audio")]
     audio_buffer: Vec<f32>,
+    #[cfg(feature = "audio")]
     noise: bool,
 
     bitmap: [u8; BITMAP_SIZE],
@@ -183,6 +184,7 @@ impl TuiApp {
             mech_tracker: DiskMechTracker::new(),
             #[cfg(feature = "audio")]
             audio_buffer: Vec::with_capacity(4096),
+            #[cfg(feature = "audio")]
             noise: cli.shared.noise,
             bitmap: [0u8; BITMAP_SIZE],
             last_bitmap: [0u8; BITMAP_SIZE],
@@ -395,13 +397,23 @@ impl TuiApp {
     }
 }
 
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
+    }
+}
+
 fn main() -> io::Result<()> {
     let cli = cli::parse();
 
     terminal::enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
-    let backend = CrosstermBackend::new(stdout);
+    execute!(io::stdout(), EnterAlternateScreen, cursor::Hide)?;
+    let _guard = TerminalGuard;
+
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = TuiApp::new(&cli)?;
@@ -425,8 +437,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    terminal::disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
+    let _ = app.apple.bus.disk.flush_all_drives();
 
     Ok(())
 }

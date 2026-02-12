@@ -135,18 +135,54 @@ fn lax_sets_negative_flag() {
 }
 
 #[test]
-fn sax_stores_a_and_x() {
+fn sax_zeropage_stores_a_and_x() {
     let mut mem = FlatMemory::new();
     mem.data[0x0000] = 0x87;
     mem.data[0x0001] = 0x10;
+    mem.data[0x0010] = 0xFF;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
-    cpu.a = 0xF0;
+    cpu.a = 0xFF;
     cpu.x = 0x0F;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x00);
+    assert_eq!(mem.data[0x0010], 0x0F);
+}
+
+#[test]
+fn sax_indirect_x_stores_a_and_x() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x83;
+    mem.data[0x0001] = 0x10;
+    mem.data[0x0011] = 0x00;
+    mem.data[0x0012] = 0x20;
+    mem.data[0x2000] = 0xFF;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.x = 0x01;
+    cpu.a = 0xAA;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x2000], 0xAA & 0x01);
+}
+
+#[test]
+fn sax_absolute_stores_a_and_x() {
+    let mut mem = FlatMemory::new();
+    mem.data[0x0000] = 0x8F;
+    mem.data[0x0001] = 0x00;
+    mem.data[0x0002] = 0x30;
+    mem.data[0x3000] = 0xFF;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.a = 0x55;
+    cpu.x = 0xAA;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x3000], 0x55 & 0xAA);
 }
 
 #[test]
