@@ -121,8 +121,7 @@ impl Bus for BusState {
         match addr {
             0x0000..=0xBFFF => {
                 self.ram[addr as usize] = val;
-                // Mark video dirty on writes to text/lo-res/hi-res pages
-                if addr >= 0x0400 && addr < 0x6000 {
+                if (0x0400..0x6000).contains(&addr) {
                     self.video_dirty = true;
                 }
             }
