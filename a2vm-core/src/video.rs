@@ -40,7 +40,11 @@ impl Default for DisplayMode {
 
 /// Apple II character generator rows in hardware order (64 chars × 8 rows).
 /// Order is: @ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_ !"#$%&'()*+,-./0123456789:;<=>?
-/// Data sourced from Apple II video character ROM dumps.
+///
+/// Data sourced from Apple II video character ROM (2513 ROM chip).
+/// References:
+/// - Apple II Reference Manual, page 137
+/// - https://en.wikipedia.org/wiki/Apple_II_character_set
 const CHAR_ROM: [u8; 512] = [
     0x00, 0x1C, 0x22, 0x2A, 0x2E, 0x2C, 0x20, 0x1E, 0x00, 0x08, 0x14, 0x22, 0x22, 0x3E, 0x22, 0x22,
     0x00, 0x3C, 0x22, 0x22, 0x3C, 0x22, 0x22, 0x3C, 0x00, 0x1C, 0x22, 0x20, 0x20, 0x20, 0x22, 0x1C,
@@ -253,8 +257,32 @@ fn set_pixel(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize) {
 /// Fill a solid rectangle in the bitmap.
 fn fill_rect(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize, w: usize, h: usize) {
     for dy in 0..h {
-        for dx in 0..w {
-            set_pixel(bitmap, x + dx, y + dy);
+        let row_start = (y + dy) * BITMAP_STRIDE;
+        let start_byte = row_start + x / 8;
+        let end_byte = row_start + (x + w - 1) / 8;
+
+        if start_byte == end_byte {
+            // Single byte case
+            let mask = ((1 << w) - 1) << (7 - (x % 8) - (w - 1));
+            bitmap[start_byte] |= mask as u8;
+        } else {
+            // First byte (partial)
+            let first_bits = 8 - (x % 8);
+            bitmap[start_byte] |= ((1u16 << first_bits) - 1) as u8;
+
+            // Full bytes in the middle
+            for byte in bitmap.iter_mut().take(end_byte).skip(start_byte + 1) {
+                *byte = 0xFF;
+            }
+
+            // Last byte (partial)
+            let last_bits = (x + w) % 8;
+            if last_bits > 0 {
+                let last_mask = 0xFF << (8 - last_bits);
+                bitmap[end_byte] |= last_mask;
+            } else {
+                bitmap[end_byte] = 0xFF;
+            }
         }
     }
 }
@@ -581,10 +609,14 @@ pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: u
         // CHAR_ROM layout: @ABC..Z[\]^_ !"#..0-9:;<=>?
         // ASCII 0x20-0x3F (space..?) → ROM indices 32..63
         // ASCII 0x40-0x5F (@.._ )  → ROM indices 0..31
+        // ASCII 0x60-0x7F (a..DEL) → same as 0x40-0x5F (uppercase mapping)
         let char_index = if (0x20..0x40).contains(&ascii) {
             (ascii - 0x20 + 32) as usize
         } else if (0x40..0x60).contains(&ascii) {
             (ascii - 0x40) as usize
+        } else if (0x60..0x80).contains(&ascii) {
+            // Map lowercase to same glyphs as uppercase
+            ((ascii - 0x60) + 0x40 - 0x40) as usize
         } else {
             0
         };

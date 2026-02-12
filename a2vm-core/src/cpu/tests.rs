@@ -137,8 +137,43 @@ fn lax_sets_negative_flag() {
 #[test]
 fn sax_stores_a_and_x() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x87;
+    mem.data[0x0000] = 0x87; // SAX ZeroPage
     mem.data[0x0001] = 0x10;
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.a = 0xFF;
+    cpu.x = 0x0F;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x0010], 0x0F); // A & X = 0xFF & 0x0F = 0x0F
+}
+
+#[test]
+fn sax_indirect_x_stores_a_and_x() {
+    let mut mem = FlatMemory::new();
+    // SAX (zp, X) - 0x83
+    mem.data[0x0000] = 0x83;
+    mem.data[0x0001] = 0x20; // zero page base
+    mem.data[0x0025] = 0x34; // lo byte of target addr (0x20 + 0x05 = 0x25)
+    mem.data[0x0026] = 0x12; // hi byte of target addr
+
+    let mut cpu = Cpu::new();
+    cpu.pc = 0x0000;
+    cpu.x = 0x05; // X index
+    cpu.a = 0xAA;
+    cpu.step(&mut mem);
+
+    assert_eq!(mem.data[0x1234], 0x00); // A & X = 0xAA & 0x05 = 0x00
+}
+
+#[test]
+fn sax_absolute_stores_a_and_x() {
+    let mut mem = FlatMemory::new();
+    // SAX $1234 - 0x8F
+    mem.data[0x0000] = 0x8F;
+    mem.data[0x0001] = 0x34; // lo byte
+    mem.data[0x0002] = 0x12; // hi byte
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -146,7 +181,7 @@ fn sax_stores_a_and_x() {
     cpu.x = 0x0F;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x00);
+    assert_eq!(mem.data[0x1234], 0x00); // A & X = 0xF0 & 0x0F = 0x00
 }
 
 #[test]

@@ -85,6 +85,7 @@ struct App {
 
     #[allow(dead_code)]
     fast_disk: bool,
+    #[cfg(feature = "audio")]
     noise: bool,
     modifiers: ModifiersState,
     status_printed: bool,
@@ -93,24 +94,15 @@ struct App {
 }
 
 impl App {
-    fn new(cli: &CliArgs) -> Self {
+    fn new(cli: &CliArgs) -> Result<Self, Box<dyn std::error::Error>> {
         let mut apple = AppleII::new();
-        let rom_data = cli.shared.rom_data().unwrap_or_else(|e| {
-            eprintln!("Error loading ROM: {e}");
-            std::process::exit(1);
-        });
-        apple.load_rom_data(&rom_data).unwrap_or_else(|e| {
-            eprintln!("Error loading ROM: {e}");
-            std::process::exit(1);
-        });
+        let rom_data = cli.shared.rom_data()?;
+        apple.load_rom_data(&rom_data)?;
 
         apple.set_disk_controller_enabled(!cli.shared.disk.is_empty());
 
         for (drive, disk) in cli.shared.disk.iter().enumerate() {
-            apple.load_disk_into_drive(disk, drive).unwrap_or_else(|e| {
-                eprintln!("Error loading disk: {e}");
-                std::process::exit(1);
-            });
+            apple.load_disk_into_drive(disk, drive)?;
         }
 
         if cli.shared.fast_disk {
@@ -132,7 +124,7 @@ impl App {
 
         let now = Instant::now();
 
-        App {
+        Ok(App {
             apple,
             pixels: None,
             window: None,
@@ -156,12 +148,13 @@ impl App {
             #[cfg(feature = "audio")]
             mech_tracker: DiskMechTracker::new(),
             fast_disk: cli.shared.fast_disk,
+            #[cfg(feature = "audio")]
             noise: cli.shared.noise,
             modifiers: ModifiersState::empty(),
             status_printed: false,
             color_mode: cli.color_mode.into(),
             frame_phase: 0,
-        }
+        })
     }
 
     fn run_emulation(&mut self) {
@@ -395,7 +388,7 @@ fn map_winit_key(event: &KeyEvent, ctrl: bool) -> Option<u8> {
             NamedKey::Enter => map_apple_key(AppleKey::Enter),
             NamedKey::Backspace => map_apple_key(AppleKey::Backspace),
             NamedKey::Delete => map_apple_key(AppleKey::Delete),
-            NamedKey::Space => map_apple_key(AppleKey::Space),
+            NamedKey::Space => map_apple_key(AppleKey::Printable(' ')),
             NamedKey::ArrowLeft => map_apple_key(AppleKey::Left),
             NamedKey::ArrowRight => map_apple_key(AppleKey::Right),
             NamedKey::ArrowUp => map_apple_key(AppleKey::Up),
@@ -480,7 +473,13 @@ impl ApplicationHandler for App {
 
 fn main() {
     let cli = cli::parse();
-    let mut app = App::new(&cli);
+    let mut app = match App::new(&cli) {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("Error initializing A2VM: {e}");
+            std::process::exit(1);
+        }
+    };
 
     let event_loop = EventLoop::new().expect("create event loop");
     event_loop.run_app(&mut app).expect("run event loop");

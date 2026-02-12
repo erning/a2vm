@@ -8,9 +8,9 @@ default = ["audio"]
 audio = ["dep:rodio"]
 
 [dependencies]
-a2vm-core = { path = "../a2vm-core" }
-a2vm-oxide = { path = "../a2vm-oxide" }
-clap = { version = "4.5", features = ["derive", "env"] }
-ratatui = "0.30"
-crossterm = "0.29"
-rodio = { version = "0.21", optional = true }
+a2vm-core = { workspace = true }
+a2vm-oxide = { workspace = true }
+clap = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+rodio = { workspace = true, optional = true }

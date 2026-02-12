@@ -4,6 +4,24 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, execute};
+
+/// RAII guard for terminal state restoration.
+/// Ensures raw mode and alternate screen are properly cleaned up on panic or error.
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn new() -> io::Result<Self> {
+        terminal::enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = terminal::disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, cursor::Show);
+    }
+}
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
@@ -122,6 +140,7 @@ struct TuiApp {
     mech_tracker: DiskMechTracker,
     #[cfg(feature = "audio")]
     audio_buffer: Vec<f32>,
+    #[cfg(feature = "audio")]
     noise: bool,
 
     bitmap: [u8; BITMAP_SIZE],
@@ -183,6 +202,7 @@ impl TuiApp {
             mech_tracker: DiskMechTracker::new(),
             #[cfg(feature = "audio")]
             audio_buffer: Vec::with_capacity(4096),
+            #[cfg(feature = "audio")]
             noise: cli.shared.noise,
             bitmap: [0u8; BITMAP_SIZE],
             last_bitmap: [0u8; BITMAP_SIZE],
@@ -398,7 +418,7 @@ impl TuiApp {
 fn main() -> io::Result<()> {
     let cli = cli::parse();
 
-    terminal::enable_raw_mode()?;
+    let _guard = TerminalGuard::new()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, cursor::Hide)?;
     let backend = CrosstermBackend::new(stdout);
@@ -424,9 +444,6 @@ fn main() -> io::Result<()> {
             std::thread::sleep(frame_duration - elapsed);
         }
     }
-
-    terminal::disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, cursor::Show)?;
 
     Ok(())
 }

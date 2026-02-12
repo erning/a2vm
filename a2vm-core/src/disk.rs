@@ -10,6 +10,10 @@ const NIBBLE_TRACK_SIZE: usize = 6656;
 const DSK_SIZE: usize = 143_360;
 
 /// DOS 3.3 physical-to-logical sector interleave.
+///
+/// This ordering optimizes sequential reads by accounting for the time
+/// needed to process each sector between reads.
+/// Reference: Beneath Apple DOS, Chapter 3
 const DOS33_SECTOR_ORDER: [usize; 16] = [0, 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8, 15];
 
 /// Stepper phase transition deltas in half-track units.
@@ -253,6 +257,10 @@ impl DiskII {
             0x06 => self.set_phase(3, false),
             0x07 => self.set_phase(3, true),
             0x08 => {
+                // Motor off: sync nibblized data back to raw before stopping
+                if self.motor_on {
+                    let _ = self.sync_nibble_to_raw(self.selected_drive);
+                }
                 self.motor_on = false;
                 self.data_ready = false;
             }
@@ -367,6 +375,25 @@ impl DiskII {
             return false;
         }
         self.drives[drive].dirty
+    }
+
+    /// Flush a specific drive's nibblized data back to the raw image file.
+    pub fn flush_drive(&mut self, drive: usize) -> crate::error::Result<()> {
+        self.sync_nibble_to_raw(drive)
+    }
+
+    /// Flush all drives that have pending writes.
+    pub fn flush_all_drives(&mut self) -> crate::error::Result<()> {
+        for drive in 0..2 {
+            self.sync_nibble_to_raw(drive)?;
+        }
+        Ok(())
+    }
+
+    /// Clear the slot ROM (for 12K ROM loading when switching from 20K).
+    pub fn clear_slot_rom(&mut self) {
+        self.slot_rom.fill(0);
+        self.slot_rom_loaded = false;
     }
 }
 
@@ -885,8 +912,8 @@ mod tests {
     #[test]
     fn test_nibble_to_raw_sync_roundtrip() {
         let mut raw = vec![0u8; DSK_SIZE];
-        for i in 0..DSK_SIZE {
-            raw[i] = (i as u8).wrapping_mul(17).wrapping_add(43);
+        for (i, byte) in raw.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_mul(17).wrapping_add(43);
         }
         let path = write_temp_dsk(&raw);
 
@@ -910,8 +937,8 @@ mod tests {
     #[test]
     fn test_decode_nibblized_track() {
         let mut raw = [0u8; DSK_SIZE];
-        for i in 0..DSK_SIZE {
-            raw[i] = (i as u8).wrapping_add(1);
+        for (i, byte) in raw.iter_mut().enumerate() {
+            *byte = (i as u8).wrapping_add(1);
         }
 
         let mut nibble_tracks = Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]);

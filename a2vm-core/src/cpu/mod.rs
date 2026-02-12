@@ -356,7 +356,8 @@ impl Cpu {
         match resolved.operand {
             Operand::Address(addr) => bus.read(addr),
             _ => {
-                unreachable!("read_operand expected address operand")
+                debug_assert!(false, "read_operand expected address operand");
+                0
             }
         }
     }
@@ -365,7 +366,8 @@ impl Cpu {
         match resolved.operand {
             Operand::Address(addr) => addr,
             _ => {
-                unreachable!("addr_of expected address operand")
+                debug_assert!(false, "addr_of expected address operand");
+                0
             }
         }
     }
@@ -916,21 +918,23 @@ impl Cpu {
 
     // -- Interrupt handlers --
 
+    /// Handle NMI interrupt. Returns cycles consumed (7).
+    /// Note: cycle counting is handled by the caller (step()).
     fn handle_nmi<B: Bus>(&mut self, bus: &mut B) -> u32 {
         self.push_word(bus, self.pc);
         self.push(bus, self.p.to_push_byte(false));
         self.p.set(I, true);
         self.pc = bus.read_word(0xFFFA);
-        self.cycles += 7;
         7
     }
 
+    /// Handle IRQ interrupt. Returns cycles consumed (7).
+    /// Note: cycle counting is handled by the caller (step()).
     fn handle_irq<B: Bus>(&mut self, bus: &mut B) -> u32 {
         self.push_word(bus, self.pc);
         self.push(bus, self.p.to_push_byte(false));
         self.p.set(I, true);
         self.pc = bus.read_word(0xFFFE);
-        self.cycles += 7;
         7
     }
 }

@@ -5,7 +5,6 @@ pub enum AppleKey {
     Enter,
     Backspace,
     Delete,
-    Space,
     Left,
     Right,
     Up,
@@ -21,7 +20,6 @@ pub fn map_apple_key(key: AppleKey) -> Option<u8> {
         AppleKey::Enter => Some(0x0D),
         AppleKey::Backspace => Some(0x08),
         AppleKey::Delete => Some(0x7F),
-        AppleKey::Space => Some(0x20),
         AppleKey::Left => Some(0x08),
         AppleKey::Right => Some(0x15),
         AppleKey::Up => Some(0x0B),
@@ -85,7 +83,6 @@ mod tests {
         assert_eq!(map_apple_key(AppleKey::Enter), Some(0x0D));
         assert_eq!(map_apple_key(AppleKey::Backspace), Some(0x08));
         assert_eq!(map_apple_key(AppleKey::Delete), Some(0x7F));
-        assert_eq!(map_apple_key(AppleKey::Space), Some(0x20));
         assert_eq!(map_apple_key(AppleKey::Left), Some(0x08));
         assert_eq!(map_apple_key(AppleKey::Right), Some(0x15));
         assert_eq!(map_apple_key(AppleKey::Up), Some(0x0B));

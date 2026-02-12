@@ -121,7 +121,9 @@ impl Bus for BusState {
         match addr {
             0x0000..=0xBFFF => {
                 self.ram[addr as usize] = val;
-                if (0x0400..0x6000).contains(&addr) {
+                // Video RAM regions: TEXT/GR Page 1&2 ($0400-$0BFF), HGR Page 1&2 ($2000-$5FFF)
+                let is_video = (0x0400..0x0C00).contains(&addr) || (0x2000..0x6000).contains(&addr);
+                if is_video {
                     self.video_dirty = true;
                 }
             }
@@ -191,16 +193,25 @@ impl AppleII {
 
     /// Load ROM data directly from a byte slice.
     pub fn load_rom_data(&mut self, data: &[u8]) -> Result<()> {
+        const ROM_SIZE_12K: usize = 0x3000;
+        const ROM_SIZE_20K: usize = 0x5000;
+        const SLOT_ROM_OFFSET: usize = 0x1600;
+        const MAIN_ROM_OFFSET: usize = 0x2000;
+
         match data.len() {
-            0x3000 => {
+            ROM_SIZE_12K => {
                 // 12K ROM → $D000-$FFFF (Apple II / Apple II+)
                 self.bus.rom.copy_from_slice(data);
+                // Clear slot-6 ROM to avoid residual state when switching from 20K
+                self.bus.disk.clear_slot_rom();
             }
-            0x5000 => {
+            ROM_SIZE_20K => {
                 // 20K ROM → $B000-$FFFF image, use $D000-$FFFF at offset $2000
-                self.bus.rom.copy_from_slice(&data[0x2000..]);
+                self.bus.rom.copy_from_slice(&data[MAIN_ROM_OFFSET..]);
                 // Extract Disk II slot 6 ROM at $C600-$C6FF (offset $1600)
-                self.bus.disk.load_slot_rom(&data[0x1600..0x1700]);
+                self.bus
+                    .disk
+                    .load_slot_rom(&data[SLOT_ROM_OFFSET..SLOT_ROM_OFFSET + 0x100]);
             }
             _ => {
                 return Err(Error::UnsupportedRomSize { actual: data.len() });
@@ -256,7 +267,13 @@ impl AppleII {
             }
             self.cpu.cycles() - start
         } else {
-            self.cpu.run(&mut self.bus, target)
+            // Non-fast-disk path: step by step to ensure disk.tick() is called
+            let start = self.cpu.cycles();
+            while self.cpu.cycles() - start < target {
+                let cycles = self.cpu.step(&mut self.bus);
+                self.bus.disk.tick(cycles);
+            }
+            self.cpu.cycles() - start
         }
     }
 
@@ -344,6 +361,15 @@ impl AppleII {
 }
 
 impl AppleII {
+    /// IOB (I/O Block) field offsets for DOS 3.3 RWTS.
+    const IOB_OFFSET_DRIVE: u16 = 0x02;
+    const IOB_OFFSET_TRACK: u16 = 0x04;
+    const IOB_OFFSET_SECTOR: u16 = 0x05;
+    const IOB_OFFSET_BUFFER_LO: u16 = 0x08;
+    const IOB_OFFSET_BUFFER_HI: u16 = 0x09;
+    const IOB_OFFSET_COMMAND: u16 = 0x0C;
+    const IOB_OFFSET_ERROR: u16 = 0x0D;
+
     /// Try to intercept RWTS at $B7B5.
     /// Returns `Some(cycles)` if the trap handled the call, `None` to fall through.
     fn try_rwts_trap(&mut self) -> Option<u32> {
@@ -351,13 +377,21 @@ impl AppleII {
         let iob_addr = self.cpu.a() as u16 | ((self.cpu.y() as u16) << 8);
 
         // Read IOB fields via peek (no side effects)
-        let command = self.bus.peek(iob_addr.wrapping_add(0x0C));
-        let track = self.bus.peek(iob_addr.wrapping_add(0x04));
-        let sector = self.bus.peek(iob_addr.wrapping_add(0x05));
-        let buf_lo = self.bus.peek(iob_addr.wrapping_add(0x08));
-        let buf_hi = self.bus.peek(iob_addr.wrapping_add(0x09));
+        let command = self
+            .bus
+            .peek(iob_addr.wrapping_add(Self::IOB_OFFSET_COMMAND));
+        let track = self.bus.peek(iob_addr.wrapping_add(Self::IOB_OFFSET_TRACK));
+        let sector = self
+            .bus
+            .peek(iob_addr.wrapping_add(Self::IOB_OFFSET_SECTOR));
+        let buf_lo = self
+            .bus
+            .peek(iob_addr.wrapping_add(Self::IOB_OFFSET_BUFFER_LO));
+        let buf_hi = self
+            .bus
+            .peek(iob_addr.wrapping_add(Self::IOB_OFFSET_BUFFER_HI));
         let buf_addr = buf_lo as u16 | ((buf_hi as u16) << 8);
-        let drive_num = self.bus.peek(iob_addr.wrapping_add(0x02));
+        let drive_num = self.bus.peek(iob_addr.wrapping_add(Self::IOB_OFFSET_DRIVE));
         let drive_idx = if drive_num <= 1 { 0 } else { 1 };
 
         match command {
@@ -365,7 +399,8 @@ impl AppleII {
                 // Seek: update half_track, return success
                 self.bus.disk.half_track = track * 2;
                 // Clear error code in IOB
-                self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                self.bus
+                    .write(iob_addr.wrapping_add(Self::IOB_OFFSET_ERROR), 0);
                 // Clear carry (success) and simulate RTS
                 self.cpu.set_flag(|p| p.set(C, false));
                 self.simulate_rts();
@@ -406,7 +441,8 @@ impl AppleII {
                         self.cpu.set_flag(|p| p.set(C, false));
                     }
                     Err(_) => {
-                        self.bus.write(iob_addr.wrapping_add(0x0D), 0x27);
+                        self.bus
+                            .write(iob_addr.wrapping_add(Self::IOB_OFFSET_ERROR), 0x27);
                         self.cpu.set_flag(|p| p.set(C, true));
                     }
                 }
