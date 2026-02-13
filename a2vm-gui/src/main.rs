@@ -144,7 +144,11 @@ impl App {
         } else {
             "D:--".to_string()
         };
-        let turbo_label = if self.runner.is_turbo() { " TURBO" } else { "" };
+        let turbo_label = if self.runner.is_turbo() {
+            format!(" TURBO:x{}", self.runner.turbo_speed())
+        } else {
+            String::new()
+        };
         let fast_label = if self.runner.apple().is_fast_disk() {
             " FAST"
         } else {
@@ -193,7 +197,7 @@ impl App {
                         return;
                     }
                     "t" => {
-                        self.runner.toggle_turbo();
+                        self.runner.cycle_turbo();
                         return;
                     }
                     _ => {}

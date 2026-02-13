@@ -159,7 +159,7 @@ impl TuiApp {
                             continue;
                         }
                         KeyCode::Char('t') => {
-                            self.runner.toggle_turbo();
+                            self.runner.cycle_turbo();
                             continue;
                         }
                         _ => {}
@@ -236,7 +236,11 @@ impl TuiApp {
                     "D:--".to_string()
                 };
                 let fast_label = if apple.is_fast_disk() { " FAST" } else { "" };
-                let turbo_label = if self.runner.is_turbo() { " TURBO" } else { "" };
+                let turbo_label = if self.runner.is_turbo() {
+                    format!(" TURBO:x{}", self.runner.turbo_speed())
+                } else {
+                    String::new()
+                };
                 let status = format!(
                     " PC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} P:{:02X} {} {}{}{} EMU:{:.2}MHz | Ctrl+Q:Quit Ctrl+R:Reset Ctrl+T:Turbo",
                     cpu.pc(),

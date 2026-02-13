@@ -23,8 +23,8 @@ use std::io::Cursor;
 #[cfg(feature = "audio")]
 use crate::noise::{DiskMechTracker, MechanicalEvent, MOVE_ARM_WAV};
 
-/// Turbo multiplier for accelerated emulation.
-const TURBO_MULTIPLIER: u64 = 4;
+/// Turbo multipliers for accelerated emulation (1x, 2x, 4x, 8x, 16x).
+const TURBO_SPEEDS: [u64; 5] = [1, 2, 4, 8, 16];
 
 /// Maximum delta time to prevent spiral of death (100ms).
 const MAX_DT: Duration = Duration::from_millis(100);
@@ -56,7 +56,7 @@ pub struct TickResult {
 /// - Performance statistics
 pub struct EmulatorRunner {
     apple: AppleII,
-    turbo: bool,
+    turbo_index: usize,
 
     // Timing state
     last_tick: Instant,
@@ -154,7 +154,7 @@ impl EmulatorRunner {
 
         Ok(Self {
             apple,
-            turbo: false,
+            turbo_index: 0,
             last_tick: now,
             cycle_accum: 0,
             perf_last_time: now,
@@ -198,8 +198,8 @@ impl EmulatorRunner {
         self.cycle_accum %= 1_000_000_000;
 
         let mut cycles_to_run = real_cycles;
-        if self.turbo {
-            cycles_to_run = cycles_to_run.saturating_mul(TURBO_MULTIPLIER);
+        if self.turbo_index > 0 {
+            cycles_to_run = cycles_to_run.saturating_mul(TURBO_SPEEDS[self.turbo_index]);
         }
 
         let ran_cycles = if cycles_to_run > 0 {
@@ -241,20 +241,40 @@ impl EmulatorRunner {
         &mut self.apple
     }
 
-    /// Check if turbo mode is enabled.
+    /// Check if turbo mode is enabled (speed > 1x).
     pub fn is_turbo(&self) -> bool {
-        self.turbo
+        self.turbo_index > 0
     }
 
-    /// Set turbo mode.
-    pub fn set_turbo(&mut self, turbo: bool) {
-        self.turbo = turbo;
+    /// Get current turbo speed (1, 2, 4, 8, or 16).
+    pub fn turbo_speed(&self) -> u64 {
+        TURBO_SPEEDS[self.turbo_index]
     }
 
-    /// Toggle turbo mode.
+    /// Set turbo speed by index.
+    pub fn set_turbo_index(&mut self, index: usize) {
+        self.turbo_index = index.min(TURBO_SPEEDS.len() - 1);
+    }
+
+    /// Cycle to next turbo speed.
+    pub fn cycle_turbo(&mut self) {
+        self.turbo_index = (self.turbo_index + 1) % TURBO_SPEEDS.len();
+    }
+
+    /// Get turbo speed index.
+    pub fn turbo_index(&self) -> usize {
+        self.turbo_index
+    }
+
+    /// Set turbo mode (for backwards compatibility).
+    pub fn set_turbo(&mut self, enabled: bool) {
+        self.turbo_index = if enabled { 1 } else { 0 };
+    }
+
+    /// Toggle turbo mode (for backwards compatibility).
     pub fn toggle_turbo(&mut self) -> bool {
-        self.turbo = !self.turbo;
-        self.turbo
+        self.cycle_turbo();
+        self.is_turbo()
     }
 
     /// Get current emulation speed in MHz.
