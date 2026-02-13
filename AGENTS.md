@@ -8,15 +8,16 @@
 |------|----------|-------|
 | CPU implementation | `a2vm-core/src/cpu/` | 6502 with 13 addressing modes |
 | Bus + soft switches | `a2vm-core/src/bus.rs`, `a2vm-core/src/machine.rs` | Keyboard, display, speaker, disk I/O |
-| Disk II | `a2vm-core/src/disk.rs` | `.dsk` load, nibblized track reads, fast-disk trap |
+| Disk II | `a2vm-core/src/disk.rs` | `.dsk` load, nibblized tracks, RWTS fast-disk trap |
 | Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
-| Keyboard mapping | `a2vm-core/src/keyboard.rs` | `AppleKey` enum, ASCII translation |
-| Shared timing | `a2vm-core/src/timing.rs` | `CPU_HZ` for cycle timing |
-| Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR bitmap pipeline + RGBA output |
-| Shared CLI args | `a2vm-oxide/src/cli.rs` | `SharedArgs` struct, embedded default ROM |
-| Mechanical noise | `a2vm-oxide/src/noise.rs` | Disk II motor/seek sound events |
-| TUI runtime | `a2vm-tui/src/main.rs`, `a2vm-tui/src/cli.rs` | Braille display (140×48), `TuiApp` struct |
-| GUI runtime | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | Native window (280×192), `App` struct |
+| Keyboard mapping | `a2vm-core/src/keyboard.rs` | `AppleKey` enum, ASCII/control translation |
+| Shared timing | `a2vm-core/src/timing.rs` | `CPU_HZ` constant |
+| Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR render + RGBA output |
+| Shared CLI args | `a2vm-oxide/src/cli.rs` | `SharedArgs`, embedded default ROM |
+| Shared frontend runtime | `a2vm-oxide/src/runner.rs` | `EmulatorRunner` for emulation/audio/noise/turbo |
+| Mechanical noise | `a2vm-oxide/src/noise.rs` | Disk motor/seek event tracking |
+| TUI runtime | `a2vm-tui/src/main.rs`, `a2vm-tui/src/cli.rs` | Braille display (140×48), terminal controls |
+| GUI runtime | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | Native window (280×192), color-mode options |
 
 ## Project Structure
 
@@ -24,9 +25,11 @@
 
 ## Key Conventions
 
-**CPU-Bus Pattern:** `AppleII` owns `Cpu` and `BusState` directly. CPU executes against mutable bus without temporary extraction patterns.
+**CPU-Bus Pattern:** `AppleII` owns `Cpu` and `BusState` directly. CPU executes against mutable bus.
 
-**ROM Support:** Only Apple II / Apple II+ ROM sizes are accepted: 12K (`0x3000`) and 20K (`0x5000`). Default ROM is embedded in `a2vm-oxide`.
+**Frontend Runtime Pattern:** TUI and GUI should delegate emulation loop concerns (cycle accumulation, turbo, audio, mechanical noise, flush-on-drop) to `a2vm_oxide::runner::EmulatorRunner`.
+
+**ROM Support:** Accepted ROM sizes are 12K (`0x3000`) and 20K (`0x5000`). Default ROM is embedded in `a2vm-oxide`.
 
 **Soft Switches:**
 - `$C010`: clears keyboard strobe
@@ -35,15 +38,15 @@
 - `$C0E0-$C0EF`: Disk II controller
 
 **Audio System:**
-- Speaker: `machine.rs` records toggles at `$C030`; `audio.rs` converts to PCM; frontends play via `rodio`
-- Mechanical: `a2vm-oxide::noise` tracks motor/track state; emits `MotorStart`/`TrackSeek`/`MotorStop` events
+- Speaker: `machine.rs` records `$C030` toggle timestamps; `audio.rs` renders PCM; frontends play via `rodio`
+- Mechanical: `a2vm-oxide::noise` tracks motor/track state and emits `MotorStart`/`TrackSeek`/`MotorStop`
 
 ## 6502 Traps (NMOS)
 
 | Issue | Location | Details |
 |-------|----------|---------|
 | BCD flags | `adc_bcd()`, `sbc_bcd()` | N/Z from binary result, not BCD |
-| JMP indirect | `resolve()` | Page wrap bug: JMP ($xxFF) reads high byte from $xx00 |
+| JMP indirect | `resolve()` | JMP `($xxFF)` reads high byte from `$xx00` |
 | BRK | `execute()` | Pushes PC+2, sets B=1 |
 | RTI vs RTS | `execute()` | RTI restores exact PC; RTS adds 1 |
 
@@ -64,7 +67,7 @@ cargo build --release -p a2vm-tui
 # Build TUI without audio
 cargo build --release -p a2vm-tui --no-default-features
 
-# Run TUI with embedded ROM (no external files needed)
+# Run TUI with embedded ROM
 cargo run -p a2vm-tui
 
 # Run TUI with custom ROM + disk
@@ -95,7 +98,7 @@ cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --noise
 
 Shared options:
 
-```
+```text
 a2vm-tui|a2vm-gui [options]
 
   --rom <FILE>        Apple II/II+ ROM (12K or 20K). Optional; uses embedded ROM if not specified.
@@ -107,7 +110,7 @@ a2vm-tui|a2vm-gui [options]
 
 GUI-only option:
 
-```
+```text
 a2vm-gui ... [--color-mode <mode>]
 
   --color-mode <mode> Display mode: 'color' (default), 'mono', 'mono-scanlines'
@@ -116,7 +119,7 @@ a2vm-gui ... [--color-mode <mode>]
 - `--rom` is optional; embedded Apple II+ ROM is used by default
 - `--disk` can be provided zero, one, or two times (drive 1 then drive 2)
 - `--fast-disk` works best with DOS 3.3 formatted disks
-- `--noise` plays `move_arm.wav` looped during disk motor activity
+- `--noise` requires audio-enabled build (`default` feature set)
 
 ## Testing
 

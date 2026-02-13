@@ -2,221 +2,211 @@
 
 ## Overview
 
-A2VM is a Rust workspace with one shared emulation core crate, one shared resources crate, and two frontend binaries.
+A2VM is a Rust workspace with one emulation core crate, one shared runtime/resources crate, and two frontend binaries.
 
-- `a2vm-core`: CPU, bus, machine integration, video, audio, disk, keyboard
-- `a2vm-oxide`: Shared frontend resources (CLI arguments, embedded ROM, mechanical noise)
-- `a2vm-tui`: terminal frontend (Braille text-mode display + keyboard + optional audio)
-- `a2vm-gui`: native window frontend (pixels + winit + optional audio)
-
-There is no Swift/FFI runtime in the current codebase.
+- `a2vm-core`: CPU, bus/machine integration, disk, video, audio, keyboard
+- `a2vm-oxide`: shared CLI, embedded assets, mechanical noise tracker, shared frontend runtime (`EmulatorRunner`)
+- `a2vm-tui`: terminal frontend (`ratatui` + `crossterm`)
+- `a2vm-gui`: native window frontend (`pixels` + `winit`)
 
 ## Workspace Layout
 
-```
+```text
 a2vm/
-  |- Cargo.toml
-  |- a2vm-core/
-  |  |- Cargo.toml
-  |  |- src/
-  |  |  |- lib.rs
-  |  |  |- audio.rs
-  |  |  |- bus.rs
-  |  |  |- disk.rs
-  |  |  |- error.rs
-  |  |  |- keyboard.rs
-  |  |  |- machine.rs
-  |  |  |- memory.rs
-  |  |  |- timing.rs
-  |  |  |- video.rs
-  |  |  `- cpu/
-  |  |     |- mod.rs
-  |  |     |- opcodes.rs
-  |  |     |- addressing.rs
-  |  |     |- disasm.rs
-  |  |     |- status.rs
-  |  |     `- tests.rs
-  |  `- tests/
-  |     |- klaus_dormann.rs
-  |     `- data/6502_functional_test.bin
-  |- a2vm-oxide/
-  |  |- Cargo.toml
-  |  |- assets/
-  |  |  |- apple2p.rom     # Default ROM (embedded)
-  |  |  |- move_arm.wav    # Disk stepper motor
-  |  |  |- disk_insertion.wav
-  |  |  |- disk_removal.wav
-  |  |  |- pop_on.wav
-  |  |  `- pop_off.wav
-  |  `- src/
-  |     |- lib.rs
-  |     |- cli.rs           # SharedArgs, DEFAULT_ROM
-  |     `- noise.rs
-  |- a2vm-tui/
-  |  `- src/
-  |     |- main.rs          # TuiApp struct
-  |     `- cli.rs           # Uses SharedArgs
-  |- a2vm-gui/
-  |  `- src/
-  |     |- main.rs          # App struct
-  |     `- cli.rs           # Uses SharedArgs + color-mode
-  `- docs/
-     `- architecture.md
+├── Cargo.toml
+├── a2vm-core/
+│   ├── src/
+│   │   ├── lib.rs
+│   │   ├── audio.rs
+│   │   ├── bus.rs
+│   │   ├── disk.rs
+│   │   ├── error.rs
+│   │   ├── keyboard.rs
+│   │   ├── machine.rs
+│   │   ├── memory.rs
+│   │   ├── timing.rs
+│   │   ├── video.rs
+│   │   └── cpu/
+│   │       ├── mod.rs
+│   │       ├── opcodes.rs
+│   │       ├── addressing.rs
+│   │       ├── disasm.rs
+│   │       ├── status.rs
+│   │       └── tests.rs
+│   └── tests/
+│       ├── klaus_dormann.rs
+│       └── data/6502_functional_test.bin
+├── a2vm-oxide/
+│   ├── assets/
+│   │   ├── apple2p.rom
+│   │   ├── move_arm.wav
+│   │   ├── disk_insertion.wav
+│   │   ├── disk_removal.wav
+│   │   ├── pop_on.wav
+│   │   └── pop_off.wav
+│   └── src/
+│       ├── lib.rs
+│       ├── cli.rs
+│       ├── noise.rs
+│       └── runner.rs
+├── a2vm-tui/
+│   └── src/
+│       ├── main.rs
+│       └── cli.rs
+├── a2vm-gui/
+│   └── src/
+│       ├── main.rs
+│       └── cli.rs
+└── docs/
+    └── architecture.md
 ```
 
 ## Runtime Architecture
 
-```
-TUI (crossterm/ratatui)  GUI (winit/pixels)
-          |                         |
-          +-----------+-------------+
-                      |
-          +-----------+-------------+
-          |                         |
-     a2vm-oxide                a2vm-core
-   (cli + noise                     |
-    + embedded                +------------+------------+
-     assets)                  |            |            |
-                             CPU        Machine         Bus
-                               |            |            |
-                               +---> Video / Audio / Disk <---+
+```text
+TUI (ratatui/crossterm)       GUI (winit/pixels)
+          |                              |
+          +--------------+---------------+
+                         |
+              a2vm-oxide::EmulatorRunner
+                         |
+                      AppleII
+                         |
+            +------------+------------+
+            |            |            |
+           CPU          Bus      Video/Audio/Disk
 ```
 
-Both frontends own an `AppleII` machine instance and run the same emulation APIs. The `a2vm-oxide` crate provides shared frontend resources including CLI argument parsing and embedded assets.
+Both frontends use the same runner and machine APIs, so turbo timing, audio generation, mechanical noise behavior, and disk flushing semantics stay consistent.
 
-## Core Modules
+## Core Modules (`a2vm-core`)
 
-### bus.rs
+### `bus.rs`
 
-`Bus` defines CPU-visible memory and I/O operations.
+`Bus` defines CPU-visible memory/I/O access.
 
 - `read(&mut self, addr)` for side-effect reads
-- `write(&mut self, addr, val)`
-- `peek(&self, addr)` for side-effect-free debug/disassembly reads
+- `write(&mut self, addr, val)` for writes
+- `peek(&self, addr)` for side-effect-free inspection/disassembly
 - `read_word_page_wrap` models NMOS JMP indirect page-wrap behavior
 
-### cpu/
+### `cpu/`
 
-- `opcodes.rs`: 256-entry opcode table (legal + ILL placeholders)
-- `addressing.rs`: 13 NMOS addressing modes
-- `status.rs`: status register bit operations
-- `mod.rs`: fetch/decode/execute loop, interrupts, ALU helpers
-- `disasm.rs`: side-effect-free instruction formatting via `Bus::peek`
-- `tests.rs`: instruction-level unit tests for critical behavior
+- `opcodes.rs`: 256-entry opcode table (official + selected unofficial opcodes)
+- `addressing.rs`: 13 addressing modes
+- `status.rs`: processor status flag helpers
+- `mod.rs`: fetch/decode/execute, interrupts, ALU behavior
+- `disasm.rs`: side-effect-free disassembly via `peek`
+- `tests.rs`: instruction-level behavior tests
 
-### machine.rs
+### `machine.rs`
 
-`AppleII` owns `Cpu`, RAM/ROM, display mode state, speaker, and Disk II controller.
+`AppleII` owns `Cpu`, RAM/ROM, soft-switch state, speaker, and Disk II.
 
-Important behavior:
+Key behavior:
 
-- `step()` executes one instruction and ticks disk timing hook
-- `run_cycles()` supports fast-disk execution path with RWTS trap
-- `load_rom(path)` loads ROM from file path
-- `load_rom_data(data)` loads ROM from byte slice (used by embedded ROM)
-- keyboard latch and strobe semantics at `$C000/$C010`
+- `step()` executes one instruction and ticks disk timing
+- `run_cycles()` handles normal stepping and optional fast-disk RWTS trap path
+- `load_rom_data()` supports 12K/20K ROM layouts
+- keyboard latch/strobe behavior at `$C000/$C010`
 - speaker toggle at `$C030`
 - display soft-switches at `$C050-$C057`
 - disk controller I/O at `$C0E0-$C0EF` and slot ROM at `$C600-$C6FF`
 
-### keyboard.rs
+### `disk.rs`
 
-Apple II keyboard mapping.
+Disk II implementation with nibblized track data.
 
-- `AppleKey` enum for printable, control, arrow, and special keys
-- `map_apple_key()` translates to Apple II ASCII values
-- handles automatic uppercase conversion for letter keys
+- loads/saves `.dsk` images
+- supports raw sector read/write helpers for RWTS trap
+- syncs nibble writes back to raw image on motor-off and explicit flush
+- exposes `flush_drive` / `flush_all_drives`
 
-### disk.rs
+### `video.rs`
 
-Disk II controller with `.dsk` loading and nibblized track data.
+Display renderer for TEXT/GR/HGR.
 
-- supports read path and write path (RWTS write trap + nibble write mode)
-- persists sector writes back to the disk image when writable
-- exposes raw-sector read/write helpers used by machine-level traps
-
-### video.rs
-
-Apple II display renderer:
-
-- TEXT/LORES/HIRES bitmap generation
+- monochrome bitmap generation
 - RGBA conversion for GUI
-- color/mono variants and frame-phase artifacts for GUI modes
+- color/mono/mono-scanlines variants
 
-### audio.rs
+### `audio.rs`
 
 Speaker edge-timeline synthesis.
 
-- records toggle cycles at `$C030` accesses
-- renders PCM by cycle budget with DC offset removal
-- supports reusable output buffer API to reduce allocations
+- collects `$C030` toggle cycles
+- renders PCM for requested cycle budget
+- supports reusable output buffer API
 
-### timing.rs
+### `keyboard.rs`
 
-Shared timing constants used by core and frontends.
+Apple II key mapping helpers.
 
-- `CPU_HZ` provides a single source of truth for Apple II target cycle timing (1.023 MHz)
+- `AppleKey` enum for printable/control/named keys
+- `map_apple_key()` to Apple II ASCII codes
 
-### error.rs
+### `error.rs`
 
-Typed core error enum for ROM/disk operations.
+Typed error enum for ROM/disk/core I/O operations with error-source chaining.
 
-- maps I/O and validation failures to explicit variants
-- frontends can print user-facing errors via `Display`
+## Shared Runtime and Resources (`a2vm-oxide`)
 
-## Shared Resources (a2vm-oxide)
+### `cli.rs`
 
-### cli.rs
+Shared CLI arguments and embedded ROM.
 
-Shared CLI arguments and embedded default ROM.
+- `SharedArgs` includes `--rom`, `--disk`, `--fast-disk`, `--noise`
+- `DEFAULT_ROM` embeds Apple II+ ROM
+- `rom_data()` returns `Cow<'static, [u8]>`
 
-- `SharedArgs`: common arguments (`--rom`, `--disk`, `--fast-disk`, `--noise`)
-- `DEFAULT_ROM`: embedded Apple II+ ROM (20K)
-- `rom_data()`: returns ROM data from file or embedded default
-- frontends use `#[command(flatten)]` to include SharedArgs
+### `noise.rs`
 
-### noise.rs
+Mechanical noise event tracker.
 
-Disk II mechanical noise simulation.
+- tracks disk motor state and half-track movement
+- emits `MotorStart` / `TrackSeek` / `MotorStop`
 
-- `DiskMechTracker`: state machine tracking motor on/off and track changes
-- `MechanicalEvent` enum: `MotorStart`, `TrackSeek`, `MotorStop`
-- `MOVE_ARM_WAV`: embedded WAV asset for stepper motor sound
-- frontends use `rodio::Source::repeat_infinite()` for continuous playback during disk activity
+### `runner.rs`
+
+`EmulatorRunner` is the common frontend runtime.
+
+Responsibilities:
+
+- cycle accumulation using elapsed wall time and `CPU_HZ`
+- turbo mode multiplier
+- optional speaker audio playback pipeline
+- optional mechanical noise playback pipeline
+- periodic emulation speed stats (`MHz`)
+- automatic disk flush on drop
 
 ## Frontends
 
-### a2vm-tui
+### `a2vm-tui`
 
-- clap-based CLI using `SharedArgs` from `a2vm-oxide`
-- `TuiApp` struct encapsulates emulation state, timing, audio, and display
-- terminal rendering through Braille conversion (140×48 effective resolution)
-- keyboard mapping to Apple II ASCII
-- optional audio playback with rodio (speaker + mechanical noise)
-- can run without external files (uses embedded ROM)
+- uses `SharedArgs` + `EmulatorRunner`
+- renders 280×192 bitmap as Braille (140×48 effective)
+- handles keyboard mapping and status line display
+- terminal state protected by RAII guard
 
-### a2vm-gui
+### `a2vm-gui`
 
-- clap-based CLI using `SharedArgs` from `a2vm-oxide` plus `--color-mode`
-- `App` struct encapsulates emulation state, timing, audio, and display
-- native event loop with winit
-- framebuffer presentation with pixels (280×192 native resolution)
-- optional audio playback with rodio (speaker + mechanical noise)
-- color mode options: `color`, `mono`, `mono-scanlines`
-- can run without external files (uses embedded ROM)
+- uses `SharedArgs` + GUI-only `--color-mode`
+- uses `EmulatorRunner` for emulation and runtime state
+- renders via `pixels` at 280×192
+- processes input through `winit`
+
+## Build/Feature Model
+
+- Workspace defines shared dependency versions in root `Cargo.toml`
+- `a2vm-oxide` has optional `audio` feature (default on)
+- TUI/GUI `audio` features forward-enable `a2vm-oxide/audio`
+- `--no-default-features` disables audio stack for environments without `rodio` backend support
 
 ## Testing Strategy
 
-- `a2vm-core/tests/klaus_dormann.rs`: full functional CPU test
-- `a2vm-core/src/cpu/tests.rs`: focused instruction-level unit tests
-- `a2vm-core/src/disk.rs` and `a2vm-core/src/machine.rs`: module-level behavior tests
-- `a2vm-oxide/src/noise.rs`: mechanical event detection unit tests
+- `cargo test`: full workspace tests
+- `cargo test -p a2vm-core`: core behavior + module tests
+- `cargo test klaus_dormann`: 6502 functional test
+- `cargo build --no-default-features -p a2vm-tui -p a2vm-gui`: no-audio build validation
 
-ROM/disk integration tests are resilient to missing external assets by returning early when files are absent.
-
-## Known Boundaries
-
-- TUI and GUI share CLI arguments via `a2vm-oxide::SharedArgs` but have frontend-specific options (`--color-mode` for GUI)
-- unofficial 6502 opcode coverage is partial; unsupported cases currently fall back to placeholder behavior
-- `Cpu` register fields are private and exposed via inline accessors for frontend status display
-- audio is optional via `--no-default-features` to allow builds without rodio/ALSA
+Core tests cover CPU behavior, disk persistence, ROM loading edge cases, keyboard/speaker semantics, and boot-path smoke checks.
