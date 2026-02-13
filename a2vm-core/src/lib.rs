@@ -8,3 +8,6 @@ pub mod machine;
 pub mod memory;
 pub mod timing;
 pub mod video;
+
+#[cfg(test)]
+pub mod test_helpers;

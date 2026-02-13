@@ -32,9 +32,9 @@ pub struct BusState {
     ram: [u8; 0xC000], // 48K RAM
     rom: [u8; 0x3000], // 12K ROM ($D000-$FFFF)
     rom_loaded: bool,
-    kbd_latch: u8,         // $C000: keyboard latch (bit 7 = strobe)
-    pub video_dirty: bool, // Set on writes to video RAM ($0400-$5FFF)
-    display_mode_gen: u8,  // Incremented on display mode switch changes
+    kbd_latch: u8,                // $C000: keyboard latch (bit 7 = strobe)
+    pub(crate) video_dirty: bool, // Set on writes to video RAM ($0400-$5FFF)
+    display_mode_gen: u8,         // Incremented on display mode switch changes
 }
 
 impl BusState {
@@ -181,6 +181,36 @@ impl AppleII {
         }
     }
 
+    /// Get display mode reference.
+    pub fn display_mode(&self) -> &DisplayMode {
+        &self.bus.display
+    }
+
+    /// Get disk controller reference.
+    pub fn disk(&self) -> &DiskII {
+        &self.bus.disk
+    }
+
+    /// Get mutable disk controller reference.
+    pub fn disk_mut(&mut self) -> &mut DiskII {
+        &mut self.bus.disk
+    }
+
+    /// Check if video RAM is dirty (needs re-render).
+    pub fn is_video_dirty(&self) -> bool {
+        self.bus.video_dirty
+    }
+
+    /// Mark video as clean after rendering.
+    pub fn clear_video_dirty(&mut self) {
+        self.bus.video_dirty = false;
+    }
+
+    /// Flush all disk drives (persist pending writes).
+    pub fn flush_all_drives(&mut self) -> Result<()> {
+        self.bus.disk.flush_all_drives()
+    }
+
     /// Load a ROM file into $D000-$FFFF.
     ///
     /// Supported sizes:
@@ -228,7 +258,7 @@ impl AppleII {
             }
         }
         let cycles = self.cpu.step(&mut self.bus);
-        self.bus.disk.tick(cycles);
+        self.bus.disk.tick(cycles as u64);
         cycles
     }
 
@@ -248,13 +278,17 @@ impl AppleII {
                 let remaining = effective - (self.cpu.cycles() - start);
                 let ran = self.cpu.run_until(&mut self.bus, remaining, 0xB7B5);
                 if ran != 0 {
-                    self.bus.disk.tick(ran.min(u32::MAX as u64) as u32);
+                    self.bus.disk.tick(ran);
                 }
 
                 if self.cpu.pc() == 0xB7B5 && self.try_rwts_trap().is_none() {
                     // Not trappable (e.g. write), step past normally
                     let cycles = self.cpu.step(&mut self.bus);
-                    self.bus.disk.tick(cycles);
+                    self.bus.disk.tick(cycles as u64);
+                    debug_assert!(
+                        self.cpu.pc() != 0xB7B5 || cycles == 0,
+                        "PC stuck at RWTS entry after step"
+                    );
                 }
             }
             self.cpu.cycles() - start
@@ -263,7 +297,7 @@ impl AppleII {
             let start = self.cpu.cycles();
             while self.cpu.cycles() - start < target {
                 let cycles = self.cpu.step(&mut self.bus);
-                self.bus.disk.tick(cycles);
+                self.bus.disk.tick(cycles as u64);
             }
             self.cpu.cycles() - start
         }
@@ -430,8 +464,8 @@ impl AppleII {
     /// Simulate an RTS by pulling the return address from the stack.
     fn simulate_rts(&mut self) {
         let sp = self.cpu.sp();
-        let lo = self.bus.peek(0x0100 | sp.wrapping_add(1) as u16);
-        let hi = self.bus.peek(0x0100 | sp.wrapping_add(2) as u16);
+        let lo = self.bus.read(0x0100 | sp.wrapping_add(1) as u16);
+        let hi = self.bus.read(0x0100 | sp.wrapping_add(2) as u16);
         self.cpu.set_sp(sp.wrapping_add(2));
         self.cpu
             .set_pc((u16::from(hi) << 8 | u16::from(lo)).wrapping_add(1));
@@ -447,47 +481,7 @@ impl Default for AppleII {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    struct TempFile {
-        path: PathBuf,
-    }
-
-    impl TempFile {
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempFile {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-
-    fn write_temp_file(bytes: &[u8], suffix: &str) -> TempFile {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("a2vm-rom-test-{nanos}-{suffix}.bin"));
-        fs::write(&path, bytes).unwrap();
-        TempFile { path }
-    }
-
-    fn write_temp_disk(bytes: &[u8], suffix: &str) -> TempFile {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("a2vm-disk-test-{nanos}-{suffix}.dsk"));
-        fs::write(&path, bytes).unwrap();
-        TempFile { path }
-    }
+    use crate::test_helpers::{create_temp_disk, create_temp_rom};
 
     fn require_paths(paths: &[&std::path::Path]) -> bool {
         paths.iter().all(|p| p.exists())
@@ -561,7 +555,7 @@ mod tests {
         let mut rom = vec![0u8; 0x5000];
         rom[0x1600] = 0xD5;
         rom[0x16FF] = 0xAA;
-        let temp = write_temp_file(&rom, "20k-disable");
+        let temp = create_temp_rom(&rom);
 
         let mut apple = AppleII::new();
         apple.load_rom(temp.path()).unwrap();
@@ -661,10 +655,10 @@ mod tests {
         let mut rom = vec![0u8; 0x5000];
         rom[0x2FFC] = 0x00;
         rom[0x2FFD] = 0xD0;
-        let rom_temp = write_temp_file(&rom, "rwts-write-rom");
+        let rom_temp = create_temp_rom(&rom);
 
         let raw_disk = vec![0u8; 143_360];
-        let disk_temp = write_temp_disk(&raw_disk, "rwts-write-disk");
+        let disk_temp = create_temp_disk(&raw_disk);
 
         let mut apple = AppleII::new();
         apple.load_rom(rom_temp.path()).unwrap();

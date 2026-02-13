@@ -141,28 +141,45 @@ fn render_text_rows(
         let base = line_addr as usize + page_offset;
         for col in 0..40usize {
             let screen_code = ram[base + col];
+            let glyph = get_text_glyph(screen_code, flash_on);
 
-            // Apple II text mode uses 64 glyphs selected by low 6 bits.
-            // CHAR_ROM is already in hardware order, so no remap is needed.
-            let char_index = (screen_code & 0x3F) as usize;
+            let pixel_y = row * 8;
+            let pixel_x = col * 7;
+            render_glyph_line(bitmap, glyph, pixel_x, pixel_y);
+        }
+    }
+}
 
-            // $00-$3F: always inverse; $40-$7F: inverse when flash_on
-            let is_inverse = screen_code < 0x40 || (screen_code < 0x80 && flash_on);
+/// Get glyph pixels for a text screen code, accounting for inverse/flash.
+#[inline]
+fn get_text_glyph(screen_code: u8, flash_on: bool) -> [u8; 8] {
+    let char_index = (screen_code & 0x3F) as usize;
+    let is_inverse = screen_code < 0x40 || (screen_code < 0x80 && flash_on);
 
-            for line in 0..8usize {
-                let mut pixels = CHAR_ROM[char_index * 8 + line];
-                if is_inverse {
-                    pixels ^= 0x7F;
-                }
+    let mut glyph = [0u8; 8];
+    for i in 0..8 {
+        glyph[i] = CHAR_ROM[char_index * 8 + i];
+        if is_inverse {
+            glyph[i] ^= 0x7F;
+        }
+    }
+    glyph
+}
 
-                let pixel_y = row * 8 + line;
-                let pixel_x = col * 7;
-                // Character ROM uses bit 6 as leftmost and bit 0 as rightmost.
-                for bit in 0..7usize {
-                    if pixels & (1 << bit) != 0 {
-                        set_pixel(bitmap, pixel_x + (6 - bit), pixel_y);
-                    }
-                }
+/// Render a single glyph row (8 pixels wide) to the bitmap.
+#[inline]
+fn render_glyph_line(
+    bitmap: &mut [u8; BITMAP_SIZE],
+    glyph: [u8; 8],
+    pixel_x: usize,
+    pixel_y: usize,
+) {
+    for line in 0..8usize {
+        let pixels = glyph[line];
+        let y = pixel_y + line;
+        for bit in 0..7usize {
+            if pixels & (1 << bit) != 0 {
+                set_pixel(bitmap, pixel_x + (6 - bit), y);
             }
         }
     }
@@ -252,19 +269,54 @@ fn set_pixel(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize) {
 
 /// Fill a solid rectangle in the bitmap.
 fn fill_rect(bitmap: &mut [u8; BITMAP_SIZE], x: usize, y: usize, w: usize, h: usize) {
+    // Fast path for small rectangles: fill byte-by-byte when width fits in single byte row
+    if w <= 8 {
+        for dy in 0..h {
+            for dx in 0..w {
+                set_pixel(bitmap, x + dx, y + dy);
+            }
+        }
+        return;
+    }
+
+    // General case: process row by row
     for dy in 0..h {
-        for dx in 0..w {
-            set_pixel(bitmap, x + dx, y + dy);
+        let row_y = y + dy;
+        let start_byte = row_y * BITMAP_STRIDE + x / 8;
+        let end_byte = row_y * BITMAP_STRIDE + (x + w - 1) / 8;
+
+        if start_byte == end_byte {
+            // Single byte spans the entire width
+            let bit_start = 7 - (x % 8);
+            let bit_end = 7 - ((x + w - 1) % 8);
+            let mask = !((0xFF << bit_end) >> (bit_start + 1)) & (0xFF >> (7 - bit_start));
+            bitmap[start_byte] |= mask;
+        } else {
+            // Fill first byte (partial)
+            let bits_first = 8 - (x % 8);
+            bitmap[start_byte] |= 0xFF >> (8 - bits_first);
+
+            // Fill middle bytes (full)
+            for b in (start_byte + 1)..end_byte {
+                bitmap[b] = 0xFF;
+            }
+
+            // Fill last byte (partial)
+            let bits_last = (x + w) % 8;
+            if bits_last > 0 {
+                bitmap[end_byte] |= 0xFF >> (8 - bits_last);
+            }
         }
     }
 }
 
 // ── RGBA constants ──────────────────────────────────────────────────
 
-/// RGBA frame dimensions (same as monochrome bitmap).
+/// RGBA frame dimensions (display + status bar).
 pub const RGBA_WIDTH: usize = 280;
-pub const RGBA_HEIGHT: usize = 192;
+pub const RGBA_HEIGHT: usize = 200; // 192 display + 8 status bar
 pub const RGBA_SIZE: usize = RGBA_WIDTH * RGBA_HEIGHT * 4;
+pub const STATUS_BAR_HEIGHT: usize = 8;
 
 /// Apple II standard Lo-Res 16-color palette (RGBA).
 const LORES_PALETTE: [[u8; 4]; 16] = [
@@ -611,7 +663,7 @@ pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: u
 /// Fill entire RGBA buffer with a single color.
 fn fill_rgba(rgba: &mut [u8], color: [u8; 4]) {
     let word = u32::from_ne_bytes(color);
-    // Safety: RGBA buffer length is always a multiple of 4
+    // Safety: RGBA_SIZE is a multiple of 4 and aligned for u32
     let (prefix, aligned, suffix) = unsafe { rgba.align_to_mut::<u32>() };
     for b in prefix.chunks_exact_mut(4) {
         b.copy_from_slice(&color);

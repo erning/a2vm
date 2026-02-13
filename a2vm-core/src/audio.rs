@@ -12,6 +12,7 @@ pub struct Speaker {
     next_sample_cycle: f64,
     hp_prev_x: f32,
     hp_prev_y: f32,
+    volume: f32,
 }
 
 impl Speaker {
@@ -22,7 +23,16 @@ impl Speaker {
             next_sample_cycle: 0.0,
             hp_prev_x: 0.0,
             hp_prev_y: 0.0,
+            volume: 1.0,
         }
+    }
+
+    pub fn volume(&self) -> f32 {
+        self.volume
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        self.volume = volume.clamp(0.0, 1.0);
     }
 
     pub fn reset(&mut self, cycle: u64) {
@@ -88,6 +98,7 @@ impl Speaker {
             }
 
             let raw = if self.state { 0.25 } else { -0.25 };
+            let raw = raw * self.volume;
             // High-pass to remove DC offset from 1-bit speaker state.
             let y = raw - self.hp_prev_x + 0.995 * self.hp_prev_y;
             self.hp_prev_x = raw;

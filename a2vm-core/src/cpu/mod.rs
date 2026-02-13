@@ -381,10 +381,8 @@ impl Cpu {
         &mut self,
         mnemonic: Mnemonic,
         mode: AddrMode,
-        #[cfg(debug_assertions)] opcode: u8,
-        #[cfg(debug_assertions)] instr_pc: u16,
-        #[cfg(not(debug_assertions))] _opcode: u8,
-        #[cfg(not(debug_assertions))] _instr_pc: u16,
+        opcode: u8,
+        instr_pc: u16,
         resolved: &Resolved,
         bus: &mut B,
     ) -> u32 {
@@ -664,7 +662,7 @@ impl Cpu {
 
             // -- Interrupt --
             Mnemonic::BRK => {
-                // BRK pushes PC+1 (so the byte after BRK opcode+padding is skipped)
+                // BRK pushes PC+2 (skips the padding byte after the BRK opcode)
                 let ret = self.pc.wrapping_add(1);
                 self.push_word(bus, ret);
                 self.push(bus, self.p.to_push_byte(true));
@@ -776,8 +774,7 @@ impl Cpu {
             }
 
             Mnemonic::ILL => {
-                #[cfg(debug_assertions)]
-                eprintln!("ILL ${opcode:02X} at PC=${instr_pc:04X}");
+                log::warn!("ILL ${opcode:02X} at PC=${instr_pc:04X}");
                 0
             }
         }

@@ -11,3 +11,4 @@ audio = ["dep:rodio"]
 clap = { workspace = true }
 rodio = { workspace = true, optional = true }
 a2vm-core = { workspace = true }
+log = { workspace = true }

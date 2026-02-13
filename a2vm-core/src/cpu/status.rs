@@ -54,12 +54,10 @@ impl Status {
     }
 
     /// Byte pushed to stack by PHP/BRK.
-    /// B is set for BRK (brk=true) and PHP (brk=true for PHP too — PHP always pushes B=1).
-    /// U is always 1.
     #[inline]
-    pub fn to_push_byte(&self, brk: bool) -> u8 {
+    pub fn to_push_byte(&self, set_b: bool) -> u8 {
         let mut val = self.0 | (1 << (U as u8));
-        if brk {
+        if set_b {
             val |= 1 << (B as u8);
         } else {
             val &= !(1 << (B as u8));

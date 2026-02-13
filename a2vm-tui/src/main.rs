@@ -45,13 +45,11 @@ const DISPLAY_H: u16 = 50;
 
 const BRAILLE_BIT: [[u8; 4]; 2] = [[0, 1, 2, 6], [3, 4, 5, 7]];
 
-fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
+fn bitmap_to_braille_inplace(bitmap: &[u8; BITMAP_SIZE], lines: &mut [String]) {
     let cols = BITMAP_WIDTH / 2;
     let rows = BITMAP_HEIGHT / 4;
-    let mut lines = Vec::with_capacity(rows);
 
-    for brow in 0..rows {
-        let mut line = String::with_capacity(cols * 3);
+    for (brow, line) in lines.iter_mut().enumerate().take(rows) {
         for bcol in 0..cols {
             let px = bcol * 2;
             let py = brow * 4;
@@ -72,12 +70,10 @@ fn bitmap_to_braille(bitmap: &[u8; BITMAP_SIZE]) -> Vec<String> {
             }
 
             let ch = char::from_u32(0x2800 + bits as u32).expect("valid braille codepoint");
+            line.clear();
             line.push(ch);
         }
-        lines.push(line);
     }
-
-    lines
 }
 
 fn map_key(key: KeyEvent) -> Option<u8> {
@@ -117,13 +113,19 @@ struct TuiApp {
 
 impl TuiApp {
     fn new(cli: &cli::CliArgs) -> io::Result<Self> {
+        let cols = BITMAP_WIDTH / 2;
+        let rows = BITMAP_HEIGHT / 4;
+        let mut braille_lines = Vec::with_capacity(rows);
+        for _ in 0..rows {
+            braille_lines.push(String::with_capacity(cols));
+        }
         let rom_data = cli.shared.rom_data().map_err(io::Error::other)?;
 
         let disk_paths: Vec<&std::path::Path> =
             cli.shared.disk.iter().map(|p| p.as_path()).collect();
 
         #[cfg(feature = "audio")]
-        let runner = EmulatorRunner::new(
+        let mut runner = EmulatorRunner::new(
             rom_data,
             &disk_paths,
             cli.shared.fast_disk,
@@ -132,8 +134,12 @@ impl TuiApp {
         .map_err(io::Error::other)?;
 
         #[cfg(not(feature = "audio"))]
-        let runner = EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk)
+        let mut runner = EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk)
             .map_err(io::Error::other)?;
+
+        if cli.shared.turbo {
+            runner.set_turbo(true);
+        }
 
         let now = Instant::now();
 
@@ -188,13 +194,13 @@ impl TuiApp {
         let flash_on = ((self.boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
         video::render(
             self.runner.apple().ram(),
-            &self.runner.apple().bus.display,
+            self.runner.apple().display_mode(),
             flash_on,
             &mut self.bitmap,
         );
 
         if !self.braille_initialized || self.bitmap != self.last_bitmap {
-            self.braille_lines = bitmap_to_braille(&self.bitmap);
+            bitmap_to_braille_inplace(&self.bitmap, &mut self.braille_lines);
             self.last_bitmap.copy_from_slice(&self.bitmap);
             self.braille_initialized = true;
         }
@@ -223,15 +229,16 @@ impl TuiApp {
             let status_y = display_rect.y + display_rect.height;
             if status_y < area.y + area.height {
                 let cpu = &apple.cpu;
-                let mode = if apple.bus.display.text {
+                let display = apple.display_mode();
+                let mode = if display.text {
                     "TEXT"
-                } else if apple.bus.display.hires {
+                } else if display.hires {
                     "HGR"
                 } else {
                     "GR"
                 };
-                let disk_status = if apple.bus.disk.motor_on {
-                    format!("D:T{}", apple.bus.disk.half_track / 2)
+                let disk_status = if apple.disk().is_motor_on() {
+                    format!("D:T{}", apple.disk().half_track() / 2)
                 } else {
                     "D:--".to_string()
                 };
@@ -266,6 +273,7 @@ impl TuiApp {
 }
 
 fn main() -> io::Result<()> {
+    env_logger::init();
     let cli = cli::parse();
 
     let _guard = TerminalGuard::new()?;

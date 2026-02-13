@@ -63,8 +63,9 @@ a2vm-tui|a2vm-gui [options]
   --rom <FILE>        Apple II/II+ ROM (12K or 20K). Optional; embedded ROM used by default.
   --disk <FILE>       .dsk disk image (143360 bytes), up to two times
   --fast-disk         Enable DOS 3.3 RWTS trap ($B7B5) for all drives
-  --noise             Enable realistic mechanical noise simulation
-  -h, --help          Show help
+  --turbo            Start in turbo mode (4x speed)
+  --noise            Enable realistic mechanical noise simulation
+  -h, --help        Show help
 ```
 
 GUI-only:

@@ -14,3 +14,5 @@ clap = { workspace = true }
 pixels = { workspace = true }
 winit = { workspace = true }
 rodio = { workspace = true, optional = true }
+log = { workspace = true }
+env_logger = { workspace = true }

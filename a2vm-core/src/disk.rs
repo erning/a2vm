@@ -42,12 +42,12 @@ const fn build_reverse_table() -> [u8; 256] {
     table
 }
 
-const AUX_BYTES: usize = 86;
-const MAIN_BYTES: usize = 256;
+const AUX_BYTES: usize = 86; // Address field nibbles per track
+const MAIN_BYTES: usize = 256; // Data bytes per sector
 const TOTAL_NIBBLES: usize = AUX_BYTES + MAIN_BYTES;
-const STAGING_SIZE: usize = TOTAL_NIBBLES + 2;
-const IDX6_MAX: usize = 0x101;
-const IDX2_START: i32 = (AUX_BYTES - 1) as i32;
+const STAGING_SIZE: usize = TOTAL_NIBBLES + 2; // Encoding buffer size
+const IDX6_MAX: usize = 0x101; // Max 6-bit address index
+const IDX2_START: i32 = (AUX_BYTES - 1) as i32; // 2-bit encoding start index
 
 /// A single floppy drive.
 struct Drive {
@@ -58,6 +58,7 @@ struct Drive {
     has_disk: bool,
     write_protected: bool,
     dirty: bool,
+    track_dirty: [bool; 35],
 }
 
 impl Drive {
@@ -70,6 +71,7 @@ impl Drive {
             has_disk: false,
             write_protected: true,
             dirty: false,
+            track_dirty: [false; 35],
         }
     }
 }
@@ -78,9 +80,9 @@ impl Drive {
 pub struct DiskII {
     drives: [Drive; 2],
     selected_drive: usize,
-    pub half_track: u8,
+    pub(crate) half_track: u8,
     phases: [bool; 4],
-    pub motor_on: bool,
+    pub(crate) motor_on: bool,
     q6: bool,
     q7: bool,
     read_latch: u8,
@@ -119,6 +121,21 @@ impl DiskII {
     pub fn clear_slot_rom(&mut self) {
         self.slot_rom.fill(0);
         self.slot_rom_loaded = false;
+    }
+
+    /// Get the current half-track position (0-69, where 2 half-tracks = 1 track).
+    pub fn half_track(&self) -> u8 {
+        self.half_track
+    }
+
+    /// Set the half-track position (0-69).
+    pub fn set_half_track(&mut self, track: u8) {
+        self.half_track = track.clamp(0, 69);
+    }
+
+    /// Check if the disk motor is on.
+    pub fn is_motor_on(&self) -> bool {
+        self.motor_on
     }
 
     /// Read from slot ROM area ($C600-$C6FF).
@@ -195,10 +212,8 @@ impl DiskII {
         );
 
         drv.dirty = true;
-        if let Some(path) = drv.image_path.as_deref() {
-            std::fs::write(path, &raw[..])?;
-            drv.dirty = false;
-        }
+        drv.track_dirty[track as usize] = true;
+        // Deferred write: actual disk write happens in flush_all_drives()
 
         Ok(())
     }
@@ -261,7 +276,7 @@ impl DiskII {
             0x08 => {
                 if self.motor_on {
                     if let Err(e) = self.sync_nibble_to_raw(self.selected_drive) {
-                        eprintln!("disk: failed to sync drive {}: {e}", self.selected_drive);
+                        log::error!("disk: failed to sync drive {}: {e}", self.selected_drive);
                     }
                 }
                 self.motor_on = false;
@@ -305,7 +320,7 @@ impl DiskII {
     }
 
     /// Tick hook for future cycle-accurate disk timing.
-    pub fn tick(&mut self, _cycles: u32) {}
+    pub fn tick(&mut self, _cycles: u64) {}
 
     /// Read one nibble from the current track position and advance rotation.
     fn read_nibble(&mut self) -> u8 {
@@ -389,6 +404,15 @@ impl DiskII {
     pub fn flush_all_drives(&mut self) -> Result<()> {
         for drive in 0..2 {
             self.sync_nibble_to_raw(drive)?;
+            let drv = &mut self.drives[drive];
+            if drv.dirty {
+                if let Some(path) = drv.image_path.as_deref() {
+                    if let Some(ref raw) = drv.raw_data {
+                        std::fs::write(path, &raw[..])?;
+                        drv.dirty = false;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -633,35 +657,11 @@ fn encode_6and2(buf: &mut Vec<u8>, data: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{create_temp_disk, TempFile};
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    struct TempDsk {
-        path: PathBuf,
-    }
-
-    impl TempDsk {
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TempDsk {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.path);
-        }
-    }
-
-    fn write_temp_dsk(bytes: &[u8]) -> TempDsk {
-        let mut path = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        path.push(format!("a2vm-disk-test-{nanos}.dsk"));
-        fs::write(&path, bytes).unwrap();
-        TempDsk { path }
+    fn write_temp_dsk(bytes: &[u8]) -> TempFile {
+        create_temp_disk(bytes)
     }
 
     fn decode_6and2_stream(encoded: &[u8]) -> [u8; 256] {
@@ -894,6 +894,9 @@ mod tests {
         }
 
         disk.write_sector_raw(0, 0, 0, &sector).unwrap();
+
+        // Flush to persist the write
+        disk.flush_all_drives().unwrap();
 
         let read_back = disk.read_sector_raw(0, 0, 0).unwrap();
         assert_eq!(read_back, sector);

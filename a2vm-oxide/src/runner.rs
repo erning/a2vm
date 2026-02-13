@@ -270,7 +270,7 @@ impl EmulatorRunner {
 
     /// Flush all drives (persist any pending writes).
     pub fn flush_drives(&mut self) -> Result<(), a2vm_core::error::Error> {
-        self.apple.bus.disk.flush_all_drives()
+        self.apple.flush_all_drives()
     }
 
     /// Process audio output.
@@ -296,9 +296,10 @@ impl EmulatorRunner {
     #[cfg(feature = "audio")]
     fn process_mechanical_noise(&mut self) {
         if let Some(ref sink) = self.mech_sink {
-            let event = self
-                .mech_tracker
-                .check(self.apple.bus.disk.motor_on, self.apple.bus.disk.half_track);
+            let event = self.mech_tracker.check(
+                self.apple.bus.disk.is_motor_on(),
+                self.apple.bus.disk.half_track(),
+            );
             if let Some(evt) = event {
                 match evt {
                     MechanicalEvent::MotorStart => {
@@ -352,9 +353,45 @@ impl Drop for EmulatorRunner {
 
 #[cfg(test)]
 mod tests {
+    use crate::EmulatorRunner;
+    use std::borrow::Cow;
+
     #[test]
     fn test_tick_accumulates_cycles() {
-        // This is a basic smoke test - full testing requires ROM data
-        // In practice, the runner is tested via the TUI/GUI integration
+        let rom = include_bytes!("../assets/apple2p.rom");
+
+        #[cfg(feature = "audio")]
+        let mut runner = EmulatorRunner::new(Cow::Borrowed(rom), &[], false, false)
+            .expect("failed to create runner");
+        #[cfg(not(feature = "audio"))]
+        let mut runner =
+            EmulatorRunner::new(Cow::Borrowed(rom), &[], false).expect("failed to create runner");
+
+        let start_cycles = runner.apple().cpu.cycles();
+
+        for _ in 0..10 {
+            runner.tick();
+        }
+
+        let end_cycles = runner.apple().cpu.cycles();
+        assert!(end_cycles > start_cycles, "cycles should accumulate");
+    }
+
+    #[test]
+    fn test_turbo_mode() {
+        let rom = include_bytes!("../assets/apple2p.rom");
+
+        #[cfg(feature = "audio")]
+        let mut runner = EmulatorRunner::new(Cow::Borrowed(rom), &[], false, false)
+            .expect("failed to create runner");
+        #[cfg(not(feature = "audio"))]
+        let mut runner =
+            EmulatorRunner::new(Cow::Borrowed(rom), &[], false).expect("failed to create runner");
+
+        runner.set_turbo(true);
+        assert!(runner.is_turbo());
+
+        runner.set_turbo(false);
+        assert!(!runner.is_turbo());
     }
 }

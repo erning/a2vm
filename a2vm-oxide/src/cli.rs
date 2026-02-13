@@ -32,6 +32,13 @@ pub struct SharedArgs {
         help = "Enable realistic mechanical noise simulation"
     )]
     pub noise: bool,
+
+    #[arg(
+        long = "turbo",
+        default_value_t = false,
+        help = "Start in turbo mode (4x speed)"
+    )]
+    pub turbo: bool,
 }
 
 impl SharedArgs {

@@ -10,15 +10,15 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
 use a2vm_core::keyboard::{map_apple_key, AppleKey};
-use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH};
+use a2vm_core::video::{self, DisplayColorMode, RGBA_HEIGHT, RGBA_WIDTH, STATUS_BAR_HEIGHT};
 use a2vm_oxide::runner::EmulatorRunner;
 
 mod cli;
 use crate::cli::CliArgs;
 
-/// Logical framebuffer: 280 wide × 192 tall (display only, no status bar).
+/// Logical framebuffer: 280 wide × 200 tall (192 display + 8 status bar).
 const FB_WIDTH: u32 = RGBA_WIDTH as u32;
-const FB_HEIGHT: u32 = RGBA_HEIGHT as u32; // 192
+const FB_HEIGHT: u32 = RGBA_HEIGHT as u32;
 
 /// Default window scale.
 const SCALE: u32 = 3;
@@ -43,9 +43,11 @@ struct App {
     color_mode: DisplayColorMode,
     frame_phase: u64,
 
-    // Status output
-    status_printed: bool,
     modifiers: ModifiersState,
+
+    // Focus state
+    has_focus: bool,
+    paused: bool,
 }
 
 impl App {
@@ -56,7 +58,7 @@ impl App {
             cli.shared.disk.iter().map(|p| p.as_path()).collect();
 
         #[cfg(feature = "audio")]
-        let runner = match EmulatorRunner::new(
+        let mut runner = match EmulatorRunner::new(
             rom_data,
             &disk_paths,
             cli.shared.fast_disk,
@@ -67,10 +69,14 @@ impl App {
         };
 
         #[cfg(not(feature = "audio"))]
-        let runner = match EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk) {
+        let mut runner = match EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk) {
             Ok(r) => r,
             Err(e) => return Err(format!("Failed to create emulator: {e}").into()),
         };
+
+        if cli.shared.turbo {
+            runner.set_turbo(true);
+        }
 
         Ok(Self {
             runner,
@@ -81,28 +87,32 @@ impl App {
             last_flash_on: false,
             color_mode: cli.color_mode.into(),
             frame_phase: 0,
-            status_printed: false,
             modifiers: ModifiersState::empty(),
+            has_focus: true,
+            paused: false,
         })
     }
 
     fn render_frame(&mut self) {
         // Skip rendering if video RAM and display mode haven't changed
         // (scanline mode always re-renders due to animation)
-        let dirty = self.runner.apple().bus.video_dirty
+        let dirty = self.runner.apple().is_video_dirty()
             || self.flash_on != self.last_flash_on
             || self.color_mode == DisplayColorMode::MonochromeScanlines;
         if !dirty {
             // Still need to present the existing frame
             if let Some(ref pixels) = self.pixels {
                 if let Err(e) = pixels.render() {
-                    eprintln!("render: {e}");
+                    log::error!("render: {e}");
                 }
             }
             return;
         }
-        self.runner.apple_mut().bus.video_dirty = false;
+        self.runner.apple_mut().clear_video_dirty();
         self.last_flash_on = self.flash_on;
+
+        // Get status text before mutable borrow of pixels
+        let status_text = self.status_text();
 
         let pixels = match self.pixels.as_mut() {
             Some(p) => p,
@@ -113,7 +123,7 @@ impl App {
 
         video::render_rgba(
             self.runner.apple().ram(),
-            &self.runner.apple().bus.display,
+            self.runner.apple().display_mode(),
             self.flash_on,
             self.color_mode,
             self.frame_phase,
@@ -121,50 +131,46 @@ impl App {
         );
         self.frame_phase = self.frame_phase.wrapping_add(1);
 
+        // Render status bar at bottom
+        let status_y = RGBA_HEIGHT - STATUS_BAR_HEIGHT;
+        video::render_status_bar(&status_text, frame, RGBA_WIDTH, status_y);
+
         if let Err(e) = pixels.render() {
-            eprintln!("render: {e}");
+            log::error!("render: {e}");
         }
     }
 
-    fn update_status(&mut self) {
-        // Update flash toggle
+    fn update_flash(&mut self) {
         self.flash_on = ((self.boot_time.elapsed().as_millis() / FLASH_HALF_PERIOD_MS) & 1) == 0;
+    }
 
-        // Print status line to stderr (similar to TUI status bar)
+    fn status_text(&self) -> String {
         let cpu = &self.runner.apple().cpu;
-        let mode = if self.runner.apple().bus.display.text {
-            "TEXT"
-        } else if self.runner.apple().bus.display.hires {
+        let display = self.runner.apple().display_mode();
+        let mode = if display.text {
+            "TXT"
+        } else if display.hires {
             "HGR"
         } else {
             "GR"
         };
-        let disk_status = if self.runner.apple().bus.disk.motor_on {
-            format!("D:T{}", self.runner.apple().bus.disk.half_track / 2)
+        let disk = if self.runner.apple().disk().is_motor_on() {
+            format!("T{}", self.runner.apple().disk().half_track() / 2)
         } else {
-            "D:--".to_string()
+            "--".to_string()
         };
-        let turbo_label = if self.runner.is_turbo() { " TURBO" } else { "" };
-        let fast_label = if self.runner.apple().is_fast_disk() {
-            " FAST"
-        } else {
-            ""
-        };
-
-        eprint!(
-            "\rPC:{:04X} A:{:02X} X:{:02X} Y:{:02X} SP:{:02X} {} {}{}{} {:.2}MHz",
+        let turbo = if self.runner.is_turbo() { "T" } else { "" };
+        format!(
+            "{:04X} {:02X}{:02X}{:02X} {} D:{} {} {:.1}",
             cpu.pc(),
             cpu.a(),
             cpu.x(),
             cpu.y(),
-            cpu.sp(),
             mode,
-            disk_status,
-            turbo_label,
-            fast_label,
+            disk,
+            turbo,
             self.runner.emu_mhz()
-        );
-        self.status_printed = true;
+        )
     }
 
     fn handle_key(&mut self, event: &KeyEvent, event_loop: &ActiveEventLoop) {
@@ -209,11 +215,7 @@ impl App {
 }
 
 impl Drop for App {
-    fn drop(&mut self) {
-        if self.status_printed {
-            eprintln!();
-        }
-    }
+    fn drop(&mut self) {}
 }
 
 /// Map a winit key event to Apple II ASCII.
@@ -282,6 +284,12 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
+            WindowEvent::Focused(focused) => {
+                self.has_focus = focused;
+                if !focused {
+                    self.paused = true;
+                }
+            }
             WindowEvent::Resized(size) => {
                 if let Some(ref mut pixels) = self.pixels {
                     pixels
@@ -306,11 +314,19 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        // Reduce CPU usage when paused (e.g., window lost focus)
+        if self.paused {
+            std::thread::sleep(Duration::from_millis(100));
+            _event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(100),
+            ));
+            return;
+        }
+
         // Run emulation tick
         self.runner.tick();
 
-        // Update status line
-        self.update_status();
+        self.update_flash();
 
         // Request redraw
         if let Some(ref window) = self.window {
@@ -324,6 +340,7 @@ impl ApplicationHandler for App {
 // ── main ────────────────────────────────────────────────────────────
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let cli = cli::parse();
     let mut app = App::new(&cli)?;
 
