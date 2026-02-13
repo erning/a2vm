@@ -323,16 +323,11 @@ impl ApplicationHandler for App {
 
 // ── main ────────────────────────────────────────────────────────────
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::parse();
-    let mut app = match App::new(&cli) {
-        Ok(app) => app,
-        Err(e) => {
-            eprintln!("Error initializing A2VM: {e}");
-            std::process::exit(1);
-        }
-    };
+    let mut app = App::new(&cli)?;
 
-    let event_loop = EventLoop::new().expect("create event loop");
-    event_loop.run_app(&mut app).expect("run event loop");
+    let event_loop = EventLoop::new()?;
+    event_loop.run_app(&mut app)?;
+    Ok(())
 }

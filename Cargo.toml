@@ -9,6 +9,5 @@ ratatui = "0.30"
 crossterm = "0.29"
 pixels = "0.15"
 winit = "0.30"
-tempfile = "3"
 a2vm-core = { path = "a2vm-core" }
 a2vm-oxide = { path = "a2vm-oxide", default-features = false }

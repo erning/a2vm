@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 
 use clap::Args;
@@ -35,10 +36,12 @@ pub struct SharedArgs {
 
 impl SharedArgs {
     /// Returns ROM data: from file if specified, otherwise embedded default.
-    pub fn rom_data(&self) -> Result<Vec<u8>, std::io::Error> {
+    ///
+    /// Returns `Cow<'static, [u8]>` to avoid copying embedded ROM bytes.
+    pub fn rom_data(&self) -> Result<Cow<'static, [u8]>, std::io::Error> {
         match &self.rom {
-            Some(path) => std::fs::read(path),
-            None => Ok(DEFAULT_ROM.to_vec()),
+            Some(path) => std::fs::read(path).map(Cow::Owned),
+            None => Ok(Cow::Borrowed(DEFAULT_ROM)),
         }
     }
 }
