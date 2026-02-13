@@ -610,6 +610,7 @@ pub fn render_status_bar(text: &str, rgba: &mut [u8], stride: usize, y_offset: u
 
 /// Fill entire RGBA buffer with a single color.
 fn fill_rgba(rgba: &mut [u8], color: [u8; 4]) {
+    debug_assert_eq!(rgba.len() % 4, 0);
     let word = u32::from_ne_bytes(color);
     // Safety: RGBA buffer length is always a multiple of 4
     let (prefix, aligned, suffix) = unsafe { rgba.align_to_mut::<u32>() };
@@ -624,14 +625,17 @@ fn fill_rgba(rgba: &mut [u8], color: [u8; 4]) {
 
 /// Fill a rectangular region in the RGBA buffer.
 fn fill_rgba_region(rgba: &mut [u8], color: [u8; 4], x: usize, y: usize, w: usize, h: usize) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    debug_assert!(x < RGBA_WIDTH && y < RGBA_HEIGHT);
+    debug_assert!(x + w <= RGBA_WIDTH);
+    debug_assert!(y + h <= RGBA_HEIGHT);
+
     for dy in 0..h {
         let row_start = ((y + dy) * RGBA_WIDTH + x) * 4;
-        for dx in 0..w {
-            let idx = row_start + dx * 4;
-            if idx + 4 <= rgba.len() {
-                rgba[idx..idx + 4].copy_from_slice(&color);
-            }
-        }
+        let row_end = row_start + w * 4;
+        fill_rgba(&mut rgba[row_start..row_end], color);
     }
 }
 

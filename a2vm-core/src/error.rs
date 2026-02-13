@@ -9,6 +9,7 @@ pub enum Error {
     InvalidDiskLocation { drive: usize, track: u8, sector: u8 },
     DiskNotLoaded,
     DiskWriteProtected,
+    DiskDecodeFailed { track: usize },
 }
 
 impl fmt::Display for Error {
@@ -34,6 +35,9 @@ impl fmt::Display for Error {
             }
             Error::DiskNotLoaded => write!(f, "no disk loaded"),
             Error::DiskWriteProtected => write!(f, "disk is write protected"),
+            Error::DiskDecodeFailed { track } => {
+                write!(f, "failed to decode nibblized disk data on track {track}")
+            }
         }
     }
 }
@@ -61,7 +65,8 @@ impl From<Error> for io::Error {
             | Error::InvalidDiskSize { .. }
             | Error::InvalidDiskLocation { .. }
             | Error::DiskNotLoaded
-            | Error::DiskWriteProtected => io::Error::new(io::ErrorKind::InvalidData, value),
+            | Error::DiskWriteProtected
+            | Error::DiskDecodeFailed { .. } => io::Error::new(io::ErrorKind::InvalidData, value),
         }
     }
 }

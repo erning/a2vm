@@ -8,6 +8,8 @@ const NIBBLE_TRACK_SIZE: usize = 6656;
 
 /// Raw .dsk image size: 35 tracks × 16 sectors × 256 bytes.
 const DSK_SIZE: usize = 143_360;
+const TRACK_COUNT: usize = 35;
+const SECTORS_PER_TRACK: usize = 16;
 
 /// DOS 3.3 physical-to-logical sector interleave.
 const DOS33_SECTOR_ORDER: [usize; 16] = [0, 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8, 15];
@@ -51,25 +53,27 @@ const IDX2_START: i32 = (AUX_BYTES - 1) as i32;
 
 /// A single floppy drive.
 struct Drive {
-    nibble_data: Box<[[u8; NIBBLE_TRACK_SIZE]; 35]>,
+    nibble_data: Box<[[u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]>,
     raw_data: Option<Box<[u8; DSK_SIZE]>>,
     image_path: Option<PathBuf>,
     byte_position: usize,
     has_disk: bool,
     write_protected: bool,
     dirty: bool,
+    dirty_tracks: [bool; TRACK_COUNT],
 }
 
 impl Drive {
     fn new() -> Self {
         Self {
-            nibble_data: Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]),
+            nibble_data: Box::new([[0u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]),
             raw_data: None,
             image_path: None,
             byte_position: 0,
             has_disk: false,
             write_protected: true,
             dirty: false,
+            dirty_tracks: [false; TRACK_COUNT],
         }
     }
 }
@@ -88,6 +92,7 @@ pub struct DiskII {
     write_latch: u8,
     slot_rom: [u8; 256],
     slot_rom_loaded: bool,
+    last_error: Option<Error>,
 }
 
 impl DiskII {
@@ -105,6 +110,7 @@ impl DiskII {
             write_latch: 0,
             slot_rom: [0; 256],
             slot_rom_loaded: false,
+            last_error: None,
         }
     }
 
@@ -159,6 +165,8 @@ impl DiskII {
         drv.write_protected = write_protected;
         drv.byte_position = 0;
         drv.dirty = false;
+        drv.dirty_tracks.fill(false);
+        self.last_error = None;
         Ok(())
     }
 
@@ -169,7 +177,7 @@ impl DiskII {
         sector: u8,
         data: &[u8; 256],
     ) -> Result<()> {
-        if drive >= 2 || track >= 35 || sector >= 16 {
+        if drive >= 2 || track as usize >= TRACK_COUNT || sector as usize >= SECTORS_PER_TRACK {
             return Err(Error::InvalidDiskLocation {
                 drive,
                 track,
@@ -186,7 +194,7 @@ impl DiskII {
         }
 
         let raw = drv.raw_data.as_mut().ok_or(Error::DiskNotLoaded)?;
-        let offset = (track as usize * 16 + sector as usize) * 256;
+        let offset = (track as usize * SECTORS_PER_TRACK + sector as usize) * 256;
         raw[offset..offset + 256].copy_from_slice(data);
         nibblize_track(
             &raw[..],
@@ -194,12 +202,13 @@ impl DiskII {
             track as usize,
         );
 
-        drv.dirty = true;
         if let Some(path) = drv.image_path.as_deref() {
             std::fs::write(path, &raw[..])?;
-            drv.dirty = false;
         }
 
+        drv.dirty = false;
+        drv.dirty_tracks[track as usize] = false;
+        self.last_error = None;
         Ok(())
     }
 
@@ -261,7 +270,7 @@ impl DiskII {
             0x08 => {
                 if self.motor_on {
                     if let Err(e) = self.sync_nibble_to_raw(self.selected_drive) {
-                        eprintln!("disk: failed to sync drive {}: {e}", self.selected_drive);
+                        self.last_error = Some(e);
                     }
                 }
                 self.motor_on = false;
@@ -294,11 +303,11 @@ impl DiskII {
     /// Read a raw 256-byte sector from the loaded .dsk image.
     /// Returns `None` if no raw data is available or track/sector is out of range.
     pub fn read_sector_raw(&self, drive: usize, track: u8, sector: u8) -> Option<[u8; 256]> {
-        if drive >= 2 || track >= 35 || sector >= 16 {
+        if drive >= 2 || track as usize >= TRACK_COUNT || sector as usize >= SECTORS_PER_TRACK {
             return None;
         }
         let raw = self.drives[drive].raw_data.as_ref()?;
-        let offset = (track as usize * 16 + sector as usize) * 256;
+        let offset = (track as usize * SECTORS_PER_TRACK + sector as usize) * 256;
         let mut buf = [0u8; 256];
         buf.copy_from_slice(&raw[offset..offset + 256]);
         Some(buf)
@@ -306,6 +315,11 @@ impl DiskII {
 
     /// Tick hook for future cycle-accurate disk timing.
     pub fn tick(&mut self, _cycles: u32) {}
+
+    /// Return and clear the last deferred disk error.
+    pub fn take_last_error(&mut self) -> Option<Error> {
+        self.last_error.take()
+    }
 
     /// Read one nibble from the current track position and advance rotation.
     fn read_nibble(&mut self) -> u8 {
@@ -334,6 +348,7 @@ impl DiskII {
             drv.byte_position = 0;
         }
         drv.dirty = true;
+        drv.dirty_tracks[track] = true;
     }
 
     /// Sync nibblized track data back to raw sectors.
@@ -356,18 +371,31 @@ impl DiskII {
         }
 
         let raw = drv.raw_data.as_mut().ok_or(Error::DiskNotLoaded)?;
-
-        // Decode each track's sectors back to raw
-        for track in 0..35 {
-            decode_nibblized_track(&drv.nibble_data[track], raw, track)?;
+        let dirty_tracks: Vec<usize> = drv
+            .dirty_tracks
+            .iter()
+            .enumerate()
+            .filter_map(|(track, dirty)| dirty.then_some(track))
+            .collect();
+        if dirty_tracks.is_empty() {
+            drv.dirty = false;
+            return Ok(());
         }
 
-        drv.dirty = false;
+        for &track in &dirty_tracks {
+            decode_nibblized_track(&drv.nibble_data[track], raw, track)?;
+        }
 
         // Persist to file if path is set
         if let Some(path) = drv.image_path.as_deref() {
             std::fs::write(path, &raw[..])?;
         }
+
+        for track in dirty_tracks {
+            drv.dirty_tracks[track] = false;
+        }
+        drv.dirty = drv.dirty_tracks.iter().any(|&dirty| dirty);
+        self.last_error = None;
 
         Ok(())
     }
@@ -411,8 +439,8 @@ fn encode_4and4(buf: &mut Vec<u8>, val: u8) {
 }
 
 /// Nibblize an entire .dsk image (35 tracks × 16 sectors) into nibble tracks.
-fn nibblize_disk(raw: &[u8], out: &mut [[u8; NIBBLE_TRACK_SIZE]; 35]) {
-    for (track, out_track) in out.iter_mut().enumerate() {
+fn nibblize_disk(raw: &[u8], out: &mut [[u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]) {
+    for (track, out_track) in out.iter_mut().enumerate().take(TRACK_COUNT) {
         nibblize_track(raw, out_track, track);
     }
 }
@@ -420,7 +448,7 @@ fn nibblize_disk(raw: &[u8], out: &mut [[u8; NIBBLE_TRACK_SIZE]; 35]) {
 fn nibblize_track(raw: &[u8], out_track: &mut [u8; NIBBLE_TRACK_SIZE], track: usize) {
     let mut buf = Vec::with_capacity(NIBBLE_TRACK_SIZE);
     for (phys_sector, &logical_sector) in DOS33_SECTOR_ORDER.iter().enumerate() {
-        let offset = (track * 16 + logical_sector) * 256;
+        let offset = (track * SECTORS_PER_TRACK + logical_sector) * 256;
         let sector_data = &raw[offset..offset + 256];
 
         nibblize_sector(&mut buf, track as u8, phys_sector as u8, sector_data);
@@ -492,10 +520,14 @@ fn decode_nibblized_track(
     raw: &mut [u8; DSK_SIZE],
     track: usize,
 ) -> Result<()> {
-    let mut pos = 0usize;
-    let mut phys_sector = 0;
+    if track >= TRACK_COUNT {
+        return Err(Error::DiskDecodeFailed { track });
+    }
 
-    while pos < NIBBLE_TRACK_SIZE {
+    let mut pos = 0usize;
+    let mut phys_sector = 0usize;
+
+    while pos < NIBBLE_TRACK_SIZE && phys_sector < SECTORS_PER_TRACK {
         // Look for data field prologue: D5 AA AD
         if pos + 2 < NIBBLE_TRACK_SIZE
             && nibble_track[pos] == 0xD5
@@ -517,19 +549,23 @@ fn decode_nibblized_track(
                 pos += 1;
             }
 
-            if encoded_len == 343 {
-                if let Some(data) = decode_6and2_sector(&encoded) {
-                    // Map physical sector to logical sector using DOS 3.3 order
-                    if phys_sector < 16 && track < 35 {
-                        let logical_sector = DOS33_SECTOR_ORDER[phys_sector];
-                        let offset = (track * 16 + logical_sector) * 256;
-                        raw[offset..offset + 256].copy_from_slice(&data);
-                    }
-                    phys_sector += 1;
-                }
+            if encoded_len != 343 {
+                return Err(Error::DiskDecodeFailed { track });
             }
+
+            let data = decode_6and2_sector(&encoded).ok_or(Error::DiskDecodeFailed { track })?;
+
+            // Map physical sector to logical sector using DOS 3.3 order.
+            let logical_sector = DOS33_SECTOR_ORDER[phys_sector];
+            let offset = (track * SECTORS_PER_TRACK + logical_sector) * 256;
+            raw[offset..offset + 256].copy_from_slice(&data);
+            phys_sector += 1;
         }
         pos += 1;
+    }
+
+    if phys_sector != SECTORS_PER_TRACK {
+        return Err(Error::DiskDecodeFailed { track });
     }
 
     Ok(())
@@ -748,11 +784,11 @@ mod tests {
     fn test_nibblize_track_size() {
         // Create a fake 1-track disk (just zeros)
         let raw = vec![0u8; DSK_SIZE];
-        let mut out = Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]);
+        let mut out = Box::new([[0u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]);
         nibblize_disk(&raw, &mut out);
 
         // Every track should be exactly NIBBLE_TRACK_SIZE bytes
-        for track in 0..35 {
+        for track in 0..TRACK_COUNT {
             assert_eq!(out[track].len(), NIBBLE_TRACK_SIZE);
         }
     }
@@ -936,6 +972,7 @@ mod tests {
         let original_sector = disk.read_sector_raw(0, 0, 0).unwrap();
 
         disk.drives[0].dirty = true;
+        disk.drives[0].dirty_tracks[0] = true;
         disk.sync_nibble_to_raw(0).unwrap();
 
         let after_sync = disk.read_sector_raw(0, 0, 0).unwrap();
@@ -952,15 +989,29 @@ mod tests {
             *byte = (i as u8).wrapping_add(1);
         }
 
-        let mut nibble_tracks = Box::new([[0u8; NIBBLE_TRACK_SIZE]; 35]);
+        let mut nibble_tracks = Box::new([[0u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]);
         nibblize_disk(&raw, &mut nibble_tracks);
 
         let mut decoded = [0u8; DSK_SIZE];
-        for track in 0..35 {
+        for track in 0..TRACK_COUNT {
             decode_nibblized_track(&nibble_tracks[track], &mut decoded, track).unwrap();
         }
 
         assert_eq!(raw, decoded);
+    }
+
+    #[test]
+    fn test_decode_nibblized_track_rejects_corrupt_data() {
+        let raw = [0u8; DSK_SIZE];
+        let mut nibble_tracks = Box::new([[0u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]);
+        nibblize_disk(&raw, &mut nibble_tracks);
+
+        // Break first track's first data prologue.
+        nibble_tracks[0][0x93] = 0x00;
+
+        let mut decoded = [0u8; DSK_SIZE];
+        let result = decode_nibblized_track(&nibble_tracks[0], &mut decoded, 0);
+        assert!(matches!(result, Err(Error::DiskDecodeFailed { track: 0 })));
     }
 
     #[test]
@@ -973,6 +1024,7 @@ mod tests {
         disk.load_disk(path, 0).unwrap();
         disk.drives[0].write_protected = true;
         disk.drives[0].dirty = true;
+        disk.drives[0].dirty_tracks[0] = true;
 
         let result = disk.sync_nibble_to_raw(0);
         assert!(matches!(result, Err(Error::DiskWriteProtected)));
@@ -1019,10 +1071,51 @@ mod tests {
 
         disk.drives[0].dirty = true;
         disk.drives[1].dirty = true;
+        disk.drives[0].dirty_tracks[0] = true;
+        disk.drives[1].dirty_tracks[0] = true;
 
         disk.flush_all_drives().unwrap();
 
         assert!(!disk.drives[0].dirty);
         assert!(!disk.drives[1].dirty);
+    }
+
+    #[test]
+    fn test_sync_failure_keeps_dirty_state_for_retry() {
+        let raw = vec![0u8; DSK_SIZE];
+        let temp = write_temp_dsk(&raw);
+        let path = temp.path();
+
+        let mut disk = DiskII::new();
+        disk.load_disk(path, 0).unwrap();
+
+        disk.drives[0].dirty = true;
+        disk.drives[0].dirty_tracks[0] = true;
+        disk.drives[0].image_path = Some(PathBuf::from("/definitely/missing/a2vm-sync-fail.dsk"));
+
+        let result = disk.sync_nibble_to_raw(0);
+        assert!(result.is_err());
+        assert!(disk.drives[0].dirty);
+        assert!(disk.drives[0].dirty_tracks[0]);
+    }
+
+    #[test]
+    fn test_take_last_error_on_motor_off_sync_failure() {
+        let raw = vec![0u8; DSK_SIZE];
+        let temp = write_temp_dsk(&raw);
+        let path = temp.path();
+
+        let mut disk = DiskII::new();
+        disk.load_disk(path, 0).unwrap();
+        disk.drives[0].dirty = true;
+        disk.drives[0].dirty_tracks[0] = true;
+        disk.drives[0].image_path = Some(PathBuf::from("/definitely/missing/a2vm-switch-fail.dsk"));
+
+        disk.motor_on = true;
+        disk.io_write(0xC0E8, 0x00);
+
+        let err = disk.take_last_error();
+        assert!(matches!(err, Some(Error::Io(_))));
+        assert!(disk.take_last_error().is_none());
     }
 }

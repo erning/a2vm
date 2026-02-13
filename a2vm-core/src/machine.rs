@@ -8,6 +8,20 @@ use crate::disk::DiskII;
 use crate::error::{Error, Result};
 use crate::video::DisplayMode;
 
+const RWTS_ENTRY_PC: u16 = 0xB7B5;
+const RWTS_IOB_DRIVE_OFFSET: u16 = 0x02;
+const RWTS_IOB_TRACK_OFFSET: u16 = 0x04;
+const RWTS_IOB_SECTOR_OFFSET: u16 = 0x05;
+const RWTS_IOB_BUFFER_LO_OFFSET: u16 = 0x08;
+const RWTS_IOB_BUFFER_HI_OFFSET: u16 = 0x09;
+const RWTS_IOB_COMMAND_OFFSET: u16 = 0x0C;
+const RWTS_IOB_ERROR_OFFSET: u16 = 0x0D;
+const RWTS_CMD_SEEK: u8 = 0x01;
+const RWTS_CMD_READ: u8 = 0x02;
+const RWTS_CMD_WRITE: u8 = 0x03;
+const RWTS_ERROR_OK: u8 = 0x00;
+const RWTS_ERROR_IO: u8 = 0x27;
+
 /// Bus state: RAM, ROM, keyboard, display, disk, speaker.
 ///
 /// Separated from CPU to allow simultaneous mutable borrows,
@@ -221,11 +235,9 @@ impl AppleII {
 
     /// Execute one CPU instruction. Returns cycles consumed.
     pub fn step(&mut self) -> u32 {
-        // Check for RWTS trap before executing the instruction
-        if self.bus.fast_disk && self.cpu.pc() == 0xB7B5 {
-            if let Some(cycles) = self.try_rwts_trap() {
-                return cycles;
-            }
+        // Check for RWTS trap before executing the instruction.
+        if let Some(cycles) = self.handle_rwts_trap() {
+            return cycles;
         }
         let cycles = self.cpu.step(&mut self.bus);
         self.bus.disk.tick(cycles);
@@ -246,13 +258,13 @@ impl AppleII {
             let start = self.cpu.cycles();
             while self.cpu.cycles() - start < effective {
                 let remaining = effective - (self.cpu.cycles() - start);
-                let ran = self.cpu.run_until(&mut self.bus, remaining, 0xB7B5);
+                let ran = self.cpu.run_until(&mut self.bus, remaining, RWTS_ENTRY_PC);
                 if ran != 0 {
                     self.bus.disk.tick(ran.min(u32::MAX as u64) as u32);
                 }
 
-                if self.cpu.pc() == 0xB7B5 && self.try_rwts_trap().is_none() {
-                    // Not trappable (e.g. write), step past normally
+                if self.cpu.pc() == RWTS_ENTRY_PC && self.handle_rwts_trap().is_none() {
+                    // Not trappable, step past normally.
                     let cycles = self.cpu.step(&mut self.bus);
                     self.bus.disk.tick(cycles);
                 }
@@ -299,6 +311,11 @@ impl AppleII {
     /// Returns whether fast-disk mode is active.
     pub fn is_fast_disk(&self) -> bool {
         self.bus.fast_disk
+    }
+
+    /// Return and clear the last deferred disk error.
+    pub fn take_disk_error(&mut self) -> Option<Error> {
+        self.bus.disk.take_last_error()
     }
 
     /// Read-only access to RAM (for video rendering).
@@ -350,6 +367,16 @@ impl AppleII {
         self.take_audio_samples_into(sample_rate, real_cycles, &mut out);
         out
     }
+
+    fn handle_rwts_trap(&mut self) -> Option<u32> {
+        if !self.bus.fast_disk || self.cpu.pc() != RWTS_ENTRY_PC {
+            return None;
+        }
+        let cycles = self.try_rwts_trap()?;
+        self.cpu.add_cycles(cycles);
+        self.bus.disk.tick(cycles);
+        Some(cycles)
+    }
 }
 
 impl AppleII {
@@ -360,27 +387,34 @@ impl AppleII {
         let iob_addr = self.cpu.a() as u16 | ((self.cpu.y() as u16) << 8);
 
         // Read IOB fields via peek (no side effects)
-        let command = self.bus.peek(iob_addr.wrapping_add(0x0C));
-        let track = self.bus.peek(iob_addr.wrapping_add(0x04));
-        let sector = self.bus.peek(iob_addr.wrapping_add(0x05));
-        let buf_lo = self.bus.peek(iob_addr.wrapping_add(0x08));
-        let buf_hi = self.bus.peek(iob_addr.wrapping_add(0x09));
+        let command = self
+            .bus
+            .peek(iob_addr.wrapping_add(RWTS_IOB_COMMAND_OFFSET));
+        let track = self.bus.peek(iob_addr.wrapping_add(RWTS_IOB_TRACK_OFFSET));
+        let sector = self.bus.peek(iob_addr.wrapping_add(RWTS_IOB_SECTOR_OFFSET));
+        let buf_lo = self
+            .bus
+            .peek(iob_addr.wrapping_add(RWTS_IOB_BUFFER_LO_OFFSET));
+        let buf_hi = self
+            .bus
+            .peek(iob_addr.wrapping_add(RWTS_IOB_BUFFER_HI_OFFSET));
         let buf_addr = buf_lo as u16 | ((buf_hi as u16) << 8);
-        let drive_num = self.bus.peek(iob_addr.wrapping_add(0x02));
+        let drive_num = self.bus.peek(iob_addr.wrapping_add(RWTS_IOB_DRIVE_OFFSET));
         let drive_idx = if drive_num <= 1 { 0 } else { 1 };
 
         match command {
-            0x01 => {
+            RWTS_CMD_SEEK => {
                 // Seek: update half_track, return success
                 self.bus.disk.half_track = track * 2;
                 // Clear error code in IOB
-                self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                self.bus
+                    .write(iob_addr.wrapping_add(RWTS_IOB_ERROR_OFFSET), RWTS_ERROR_OK);
                 // Clear carry (success) and simulate RTS
                 self.cpu.set_flag(|p| p.set(C, false));
                 self.simulate_rts();
                 Some(50)
             }
-            0x02 => {
+            RWTS_CMD_READ => {
                 // Read: copy sector data from raw image to RAM buffer
                 if let Some(data) = self.bus.disk.read_sector_raw(drive_idx, track, sector) {
                     for (i, &byte) in data.iter().enumerate() {
@@ -389,7 +423,8 @@ impl AppleII {
                     // Update half_track to match
                     self.bus.disk.half_track = track * 2;
                     // Clear error code in IOB
-                    self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                    self.bus
+                        .write(iob_addr.wrapping_add(RWTS_IOB_ERROR_OFFSET), RWTS_ERROR_OK);
                     // Clear carry (success) and simulate RTS
                     self.cpu.set_flag(|p| p.set(C, false));
                     self.simulate_rts();
@@ -398,7 +433,7 @@ impl AppleII {
                     None // fall through to normal emulation
                 }
             }
-            0x03 => {
+            RWTS_CMD_WRITE => {
                 let mut data = [0u8; 256];
                 for (i, byte) in data.iter_mut().enumerate() {
                     *byte = self.bus.peek(buf_addr.wrapping_add(i as u16));
@@ -411,11 +446,13 @@ impl AppleII {
                 {
                     Ok(()) => {
                         self.bus.disk.half_track = track * 2;
-                        self.bus.write(iob_addr.wrapping_add(0x0D), 0);
+                        self.bus
+                            .write(iob_addr.wrapping_add(RWTS_IOB_ERROR_OFFSET), RWTS_ERROR_OK);
                         self.cpu.set_flag(|p| p.set(C, false));
                     }
                     Err(_) => {
-                        self.bus.write(iob_addr.wrapping_add(0x0D), 0x27);
+                        self.bus
+                            .write(iob_addr.wrapping_add(RWTS_IOB_ERROR_OFFSET), RWTS_ERROR_IO);
                         self.cpu.set_flag(|p| p.set(C, true));
                     }
                 }
@@ -423,7 +460,7 @@ impl AppleII {
                 self.simulate_rts();
                 Some(140)
             }
-            _ => None, // write or unknown: fall through
+            _ => None, // unknown command: fall through
         }
     }
 
@@ -704,6 +741,39 @@ mod tests {
         for (i, &actual) in sector.iter().enumerate() {
             assert_eq!(actual, (i as u8).wrapping_mul(5).wrapping_add(1));
         }
+    }
+
+    #[test]
+    fn test_step_rwts_trap_advances_cpu_cycles() {
+        let mut apple = AppleII::new();
+        apple.set_fast_disk(true);
+
+        let iob = 0x0200u16;
+        apple.write(iob.wrapping_add(RWTS_IOB_COMMAND_OFFSET), RWTS_CMD_SEEK);
+        apple.write(iob.wrapping_add(RWTS_IOB_TRACK_OFFSET), 3);
+        apple.write(iob.wrapping_add(RWTS_IOB_SECTOR_OFFSET), 0);
+        apple.write(iob.wrapping_add(RWTS_IOB_DRIVE_OFFSET), 1);
+        apple.write(iob.wrapping_add(RWTS_IOB_ERROR_OFFSET), 0xFF);
+
+        apple.cpu.set_a((iob & 0xFF) as u8);
+        apple.cpu.set_y((iob >> 8) as u8);
+        apple.cpu.set_pc(RWTS_ENTRY_PC);
+        apple.cpu.set_sp(0xFD);
+        apple.write(0x01FE, 0x78);
+        apple.write(0x01FF, 0x56);
+
+        let before = apple.cpu.cycles();
+        let consumed = apple.step();
+
+        assert_eq!(consumed, 50);
+        assert_eq!(apple.cpu.cycles() - before, 50);
+        assert_eq!(apple.bus.disk.half_track, 6);
+        assert_eq!(
+            apple.peek(iob.wrapping_add(RWTS_IOB_ERROR_OFFSET)),
+            RWTS_ERROR_OK
+        );
+        assert!(!apple.cpu.p().get(C));
+        assert_eq!(apple.cpu.pc(), 0x5679);
     }
 
     #[test]

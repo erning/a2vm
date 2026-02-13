@@ -116,6 +116,11 @@ impl Cpu {
         flag(&mut self.p);
     }
 
+    #[inline(always)]
+    pub fn add_cycles(&mut self, delta: u32) {
+        self.cycles = self.cycles.saturating_add(delta as u64);
+    }
+
     /// Set the cycle counter (for testing purposes only).
     #[cfg(test)]
     #[inline(always)]

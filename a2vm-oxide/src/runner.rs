@@ -209,6 +209,10 @@ impl EmulatorRunner {
             false
         };
 
+        if let Some(err) = self.apple.bus.disk.take_last_error() {
+            eprintln!("disk: {err}");
+        }
+
         // Process audio
         #[cfg(feature = "audio")]
         if ran_cycles {
@@ -366,7 +370,9 @@ impl EmulatorRunner {
 impl Drop for EmulatorRunner {
     fn drop(&mut self) {
         // Flush drives on drop to ensure data persistence
-        let _ = self.flush_drives();
+        if let Err(err) = self.flush_drives() {
+            eprintln!("disk: flush on shutdown failed: {err}");
+        }
     }
 }
 
