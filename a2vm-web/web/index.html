@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A2VM - Apple II Emulator</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        background: #1a1a1a;
+        color: #fff;
+        font-family: 'Courier New', monospace;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+      }
+      
+      h1 {
+        margin-bottom: 20px;
+        font-size: 24px;
+      }
+      
+      #screen-container {
+        width: 100%;
+        max-width: 900px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+        background: #111;
+        border: 2px solid #333;
+        border-radius: 4px;
+      }
+      
+      #screen {
+        image-rendering: pixelated;
+        max-width: 100%;
+        max-height: 70vh;
+        height: auto;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      }
+      
+      #scale-controls {
+        margin-top: 10px;
+        display: flex;
+        gap: 5px;
+        align-items: center;
+        font-size: 12px;
+      }
+      
+      #scale-controls button {
+        padding: 4px 12px;
+        font-size: 14px;
+        font-weight: bold;
+      }
+      
+      #scale-value {
+        min-width: 50px;
+        text-align: center;
+        font-family: monospace;
+      }
+      
+      #status {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #888;
+        font-family: monospace;
+      }
+      
+      #controls {
+        margin-top: 20px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      
+      button {
+        padding: 8px 16px;
+        background: #333;
+        color: #fff;
+        border: 1px solid #555;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      
+      button:hover {
+        background: #444;
+      }
+      
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      
+      #disk-controls {
+        margin-top: 10px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      
+      input[type="file"] {
+        display: none;
+      }
+      
+      .file-label {
+        padding: 8px 16px;
+        background: #2a5a2a;
+        color: #fff;
+        border: 1px solid #4a8a4a;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      
+      .file-label:hover {
+        background: #3a7a3a;
+      }
+      
+      #instructions {
+        margin-top: 20px;
+        padding: 15px;
+        background: #222;
+        border: 1px solid #444;
+        max-width: 600px;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      
+      #instructions h3 {
+        margin-bottom: 10px;
+        color: #4a8;
+      }
+      
+      #instructions kbd {
+        background: #333;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-family: monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>A2VM - Apple II Emulator</h1>
+    
+    <div id="screen-container">
+      <canvas id="screen" width="280" height="192"></canvas>
+    </div>
+    
+    <div id="scale-controls">
+      <button id="btn-scale-down">−</button>
+      <span id="scale-value">100%</span>
+      <button id="btn-scale-up">+</button>
+      <button id="btn-scale-fit">Fit</button>
+    </div>
+    
+    <div id="status">PC:0000 A:00 X:00 Y:00 SP:00 -- D:-- 0.00MHz</div>
+    
+    <div id="controls">
+      <button id="btn-reset">Reset</button>
+      <button id="btn-turbo">Turbo</button>
+      <button id="btn-fastdisk">Fast Disk</button>
+      <button id="btn-audio">Audio</button>
+      <button id="btn-export">Export Disk</button>
+    </div>
+    
+    <div id="disk-controls">
+      <label for="file-rom" class="file-label">Load ROM</label>
+      <input type="file" id="file-rom" accept=".rom" />
+      
+      <label for="file-disk1" class="file-label">Load Disk 1</label>
+      <input type="file" id="file-disk1" accept=".dsk,.po" />
+      
+      <label for="file-disk2" class="file-label">Load Disk 2</label>
+      <input type="file" id="file-disk2" accept=".dsk,.po" />
+      
+      <span id="disk-status">No disks loaded</span>
+    </div>
+    
+    <div id="instructions">
+      <h3>Controls</h3>
+      <p><kbd>Ctrl+R</kbd> - Reset | <kbd>Ctrl+T</kbd> - Toggle Turbo | Type normally for Apple II input</p>
+      <p>Load an Apple II/II+ ROM file (12K or 20K), then optionally load DOS 3.3 disk images (.dsk).</p>
+    </div>
+    
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

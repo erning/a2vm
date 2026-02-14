@@ -76,6 +76,13 @@ impl DiskII {
     pub fn take_last_error(&mut self) -> Option<Error> {
         self.last_error.take()
     }
+
+    pub fn has_disk(&self, drive: usize) -> bool {
+        if drive >= 2 {
+            return false;
+        }
+        self.drives[drive].has_disk
+    }
 }
 
 impl Default for DiskII {

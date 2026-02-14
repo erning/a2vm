@@ -40,6 +40,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "a2vm-web"
+version = "0.1.0"
+dependencies = [
+ "a2vm-core",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "ab_glyph"
 version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"

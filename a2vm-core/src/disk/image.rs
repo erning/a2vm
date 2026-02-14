@@ -1,12 +1,48 @@
-use std::path::Path;
-
 use crate::error::{Error, Result};
 
 use super::codec::{decode_nibblized_track, nibblize_disk, nibblize_track};
 use super::{DiskII, DSK_SIZE, SECTORS_PER_TRACK, TRACK_COUNT};
 
+#[cfg(feature = "std")]
+use std::path::Path;
+
 impl DiskII {
-    /// Load a .dsk image into a drive (0 or 1).
+    /// Load a .dsk image from bytes into a drive (0 or 1).
+    pub fn load_disk_bytes(
+        &mut self,
+        data: &[u8],
+        drive: usize,
+        write_protected: bool,
+    ) -> Result<()> {
+        if drive >= 2 {
+            return Err(Error::InvalidDiskLocation {
+                drive,
+                track: 0,
+                sector: 0,
+            });
+        }
+        if data.len() != DSK_SIZE {
+            return Err(Error::InvalidDiskSize {
+                expected: DSK_SIZE,
+                actual: data.len(),
+            });
+        }
+        let drv = &mut self.drives[drive];
+        nibblize_disk(data, &mut drv.nibble_data);
+        let mut raw = Box::new([0u8; DSK_SIZE]);
+        raw.copy_from_slice(data);
+        drv.raw_data = Some(raw);
+        drv.has_disk = true;
+        drv.write_protected = write_protected;
+        drv.byte_position = 0;
+        drv.dirty = false;
+        drv.dirty_tracks.fill(false);
+        self.last_error = None;
+        Ok(())
+    }
+
+    #[cfg(feature = "std")]
+    /// Load a .dsk image from file into a drive (0 or 1).
     pub fn load_disk(&mut self, path: &Path, drive: usize) -> Result<()> {
         if drive >= 2 {
             return Err(Error::InvalidDiskLocation {
@@ -22,21 +58,12 @@ impl DiskII {
                 actual: data.len(),
             });
         }
-        let drv = &mut self.drives[drive];
-        nibblize_disk(&data, &mut drv.nibble_data);
-        let mut raw = Box::new([0u8; DSK_SIZE]);
-        raw.copy_from_slice(&data);
         let write_protected = std::fs::metadata(path)
             .map(|meta| meta.permissions().readonly())
             .unwrap_or(true);
-        drv.raw_data = Some(raw);
-        drv.image_path = Some(path.to_path_buf());
-        drv.has_disk = true;
-        drv.write_protected = write_protected;
-        drv.byte_position = 0;
-        drv.dirty = false;
-        drv.dirty_tracks.fill(false);
-        self.last_error = None;
+
+        self.load_disk_bytes(&data, drive, write_protected)?;
+        self.drives[drive].image_path = Some(path.to_path_buf());
         Ok(())
     }
 
@@ -72,6 +99,7 @@ impl DiskII {
             track as usize,
         );
 
+        #[cfg(feature = "std")]
         if let Some(path) = drv.image_path.as_deref() {
             std::fs::write(path, &raw[..])?;
         }
@@ -130,7 +158,7 @@ impl DiskII {
             decode_nibblized_track(&drv.nibble_data[track], raw, track)?;
         }
 
-        // Persist to file if path is set
+        #[cfg(feature = "std")]
         if let Some(path) = drv.image_path.as_deref() {
             std::fs::write(path, &raw[..])?;
         }
@@ -163,5 +191,17 @@ impl DiskII {
             self.sync_nibble_to_raw(drive)?;
         }
         Ok(())
+    }
+
+    /// Export raw disk data for a drive as bytes.
+    pub fn export_disk_bytes(&self, drive: usize) -> Option<&[u8]> {
+        if drive >= 2 {
+            return None;
+        }
+        let drv = &self.drives[drive];
+        if !drv.has_disk {
+            return None;
+        }
+        drv.raw_data.as_ref().map(|raw| raw.as_slice())
     }
 }

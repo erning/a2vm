@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::audio::Speaker;
 use crate::bus::Bus;
 use crate::cpu::status::C;
@@ -7,6 +5,9 @@ use crate::cpu::Cpu;
 use crate::disk::DiskII;
 use crate::error::{Error, Result};
 use crate::video::DisplayMode;
+
+#[cfg(feature = "std")]
+use std::path::Path;
 
 mod bus_state;
 mod runtime;
@@ -70,10 +71,7 @@ impl AppleII {
     }
 
     /// Load a ROM file into $D000-$FFFF.
-    ///
-    /// Supported sizes:
-    ///   - 12K (12288): $D000-$FFFF directly (Apple II, Apple II+)
-    ///   - 20K (20480): $B000-$FFFF image, uses $D000-$FFFF at offset $2000 (Apple II+)
+    #[cfg(feature = "std")]
     pub fn load_rom(&mut self, path: &Path) -> Result<()> {
         let data = std::fs::read(path)?;
         self.load_rom_data(&data)
@@ -116,11 +114,27 @@ impl AppleII {
         self.bus.kbd_latch = ascii | 0x80;
     }
 
+    pub fn load_disk_bytes_into_drive(
+        &mut self,
+        data: &[u8],
+        drive: usize,
+        write_protected: bool,
+    ) -> Result<()> {
+        self.bus.disk_controller_enabled = true;
+        self.bus.disk.load_disk_bytes(data, drive, write_protected)
+    }
+
+    #[cfg(feature = "std")]
     pub fn load_disk_into_drive(&mut self, path: &Path, drive: usize) -> Result<()> {
         self.bus.disk_controller_enabled = true;
         self.bus.disk.load_disk(path, drive)
     }
 
+    pub fn load_disk_bytes(&mut self, data: &[u8], write_protected: bool) -> Result<()> {
+        self.load_disk_bytes_into_drive(data, 0, write_protected)
+    }
+
+    #[cfg(feature = "std")]
     /// Load a .dsk disk image into drive 1.
     pub fn load_disk(&mut self, path: &Path) -> Result<()> {
         self.load_disk_into_drive(path, 0)
@@ -164,6 +178,18 @@ impl AppleII {
     /// Convenience: bus peek (no side effects).
     pub fn peek(&self, addr: u16) -> u8 {
         self.bus.peek(addr)
+    }
+
+    pub fn kbd_latch(&self) -> u8 {
+        self.bus.kbd_latch
+    }
+
+    pub fn clear_kbd_strobe(&mut self) {
+        self.bus.kbd_latch &= 0x7F;
+    }
+
+    pub fn has_disk(&self, drive: usize) -> bool {
+        self.bus.disk.has_disk(drive)
     }
 }
 

@@ -1,3 +1,4 @@
+#[cfg(feature = "std")]
 use std::path::PathBuf;
 
 use super::{DSK_SIZE, NIBBLE_TRACK_SIZE, TRACK_COUNT};
@@ -6,6 +7,7 @@ use super::{DSK_SIZE, NIBBLE_TRACK_SIZE, TRACK_COUNT};
 pub(super) struct Drive {
     pub(super) nibble_data: Box<[[u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]>,
     pub(super) raw_data: Option<Box<[u8; DSK_SIZE]>>,
+    #[cfg(feature = "std")]
     pub(super) image_path: Option<PathBuf>,
     pub(super) byte_position: usize,
     pub(super) has_disk: bool,
@@ -19,6 +21,7 @@ impl Drive {
         Self {
             nibble_data: Box::new([[0u8; NIBBLE_TRACK_SIZE]; TRACK_COUNT]),
             raw_data: None,
+            #[cfg(feature = "std")]
             image_path: None,
             byte_position: 0,
             has_disk: false,
