@@ -22,7 +22,12 @@ a2vm/
 │   │   ├── disk.rs
 │   │   ├── error.rs
 │   │   ├── keyboard.rs
-│   │   ├── machine.rs
+│   │   ├── machine/
+│   │   │   ├── mod.rs
+│   │   │   ├── bus_state.rs
+│   │   │   ├── runtime.rs
+│   │   │   ├── rwts.rs
+│   │   │   └── tests.rs
 │   │   ├── memory.rs
 │   │   ├── timing.rs
 │   │   ├── video/
@@ -106,7 +111,7 @@ Both frontends use the same runner and machine APIs, so turbo timing, audio gene
 - `disasm.rs`: side-effect-free disassembly via `peek`
 - `tests.rs`: instruction-level behavior tests
 
-### `machine.rs`
+### `machine/`
 
 `AppleII` owns `Cpu`, RAM/ROM, soft-switch state, speaker, and Disk II.
 

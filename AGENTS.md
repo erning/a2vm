@@ -7,7 +7,7 @@
 | Task | Location | Notes |
 |------|----------|-------|
 | CPU implementation | `a2vm-core/src/cpu/` | 6502 with 13 addressing modes |
-| Bus + soft switches | `a2vm-core/src/bus.rs`, `a2vm-core/src/machine.rs` | Keyboard, display, speaker, disk I/O |
+| Bus + soft switches | `a2vm-core/src/bus.rs`, `a2vm-core/src/machine/` | Keyboard, display, speaker, disk I/O |
 | Disk II | `a2vm-core/src/disk.rs` | `.dsk` load, nibblized tracks, RWTS fast-disk trap |
 | Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
 | Keyboard mapping | `a2vm-core/src/keyboard.rs` | `AppleKey` enum, ASCII/control translation |
@@ -38,7 +38,7 @@
 - `$C0E0-$C0EF`: Disk II controller
 
 **Audio System:**
-- Speaker: `machine.rs` records `$C030` toggle timestamps; `audio.rs` renders PCM; frontends play via `rodio`
+- Speaker: `machine/` records `$C030` toggle timestamps; `audio.rs` renders PCM; frontends play via `rodio`
 - Mechanical: `a2vm-oxide::noise` tracks motor/track state and emits `MotorStart`/`TrackSeek`/`MotorStop`
 
 ## 6502 Traps (NMOS)
