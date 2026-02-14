@@ -12,7 +12,7 @@
 | Speaker audio | `a2vm-core/src/audio.rs` | `$C030` toggles -> PCM samples |
 | Keyboard mapping | `a2vm-core/src/keyboard.rs` | `AppleKey` enum, ASCII/control translation |
 | Shared timing | `a2vm-core/src/timing.rs` | `CPU_HZ` constant |
-| Video renderer | `a2vm-core/src/video.rs` | TEXT/GR/HGR render + RGBA output |
+| Video renderer | `a2vm-core/src/video/` | TEXT/GR/HGR render + RGBA output |
 | Shared CLI args | `a2vm-oxide/src/cli.rs` | `SharedArgs`, embedded default ROM |
 | Shared frontend runtime | `a2vm-oxide/src/runner.rs` | `EmulatorRunner` for emulation/audio/noise/turbo |
 | Mechanical noise | `a2vm-oxide/src/noise.rs` | Disk motor/seek event tracking |

@@ -25,7 +25,14 @@ a2vm/
 │   │   ├── machine.rs
 │   │   ├── memory.rs
 │   │   ├── timing.rs
-│   │   ├── video.rs
+│   │   ├── video/
+│   │   │   ├── mod.rs
+│   │   │   ├── mode.rs
+│   │   │   ├── layout.rs
+│   │   │   ├── mono.rs
+│   │   │   ├── rgba.rs
+│   │   │   ├── overlay.rs
+│   │   │   └── tests.rs
 │   │   └── cpu/
 │   │       ├── mod.rs
 │   │       ├── opcodes.rs
@@ -122,7 +129,7 @@ Disk II implementation with nibblized track data.
 - syncs nibble writes back to raw image on motor-off and explicit flush
 - exposes `flush_drive` / `flush_all_drives`
 
-### `video.rs`
+### `video/`
 
 Display renderer for TEXT/GR/HGR.
 
