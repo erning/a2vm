@@ -122,7 +122,6 @@ impl TuiApp {
         let disk_paths: Vec<&std::path::Path> =
             cli.shared.disk.iter().map(|p| p.as_path()).collect();
 
-        #[cfg(feature = "audio")]
         let runner = EmulatorRunner::new(
             rom_data,
             &disk_paths,
@@ -130,10 +129,6 @@ impl TuiApp {
             cli.shared.noise,
         )
         .map_err(io::Error::other)?;
-
-        #[cfg(not(feature = "audio"))]
-        let runner = EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk)
-            .map_err(io::Error::other)?;
 
         let now = Instant::now();
 

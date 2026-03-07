@@ -55,19 +55,12 @@ impl App {
         let disk_paths: Vec<&std::path::Path> =
             cli.shared.disk.iter().map(|p| p.as_path()).collect();
 
-        #[cfg(feature = "audio")]
         let runner = match EmulatorRunner::new(
             rom_data,
             &disk_paths,
             cli.shared.fast_disk,
             cli.shared.noise,
         ) {
-            Ok(r) => r,
-            Err(e) => return Err(format!("Failed to create emulator: {e}").into()),
-        };
-
-        #[cfg(not(feature = "audio"))]
-        let runner = match EmulatorRunner::new(rom_data, &disk_paths, cli.shared.fast_disk) {
             Ok(r) => r,
             Err(e) => return Err(format!("Failed to create emulator: {e}").into()),
         };
@@ -266,11 +259,25 @@ impl ApplicationHandler for App {
             .with_inner_size(size)
             .with_min_inner_size(LogicalSize::new(FB_WIDTH, FB_HEIGHT));
 
-        let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                eprintln!("Failed to create window: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         let physical = window.inner_size();
         let surface = SurfaceTexture::new(physical.width, physical.height, window.clone());
-        let pixels = Pixels::new(FB_WIDTH, FB_HEIGHT, surface).expect("create pixels");
+        let pixels = match Pixels::new(FB_WIDTH, FB_HEIGHT, surface) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Failed to create pixels: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
 
         self.window = Some(window);
         self.pixels = Some(pixels);

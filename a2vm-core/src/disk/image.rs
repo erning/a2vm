@@ -28,7 +28,13 @@ impl DiskII {
         raw.copy_from_slice(&data);
         let write_protected = std::fs::metadata(path)
             .map(|meta| meta.permissions().readonly())
-            .unwrap_or(true);
+            .unwrap_or_else(|e| {
+                eprintln!(
+                    "disk: cannot read metadata for {}: {e}, assuming write-protected",
+                    path.display()
+                );
+                true
+            });
         drv.raw_data = Some(raw);
         drv.image_path = Some(path.to_path_buf());
         drv.has_disk = true;

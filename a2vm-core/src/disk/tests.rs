@@ -7,6 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
 struct TempDsk {
     path: PathBuf,
 }
@@ -23,15 +25,12 @@ impl Drop for TempDsk {
     }
 }
 
-fn write_temp_dsk(bytes: &[u8]) -> TempDsk {
+fn write_temp_dsk(bytes: &[u8]) -> Result<TempDsk, Box<dyn std::error::Error>> {
     let mut path = std::env::temp_dir();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     path.push(format!("a2vm-disk-test-{nanos}.dsk"));
-    fs::write(&path, bytes).unwrap();
-    TempDsk { path }
+    fs::write(&path, bytes)?;
+    Ok(TempDsk { path })
 }
 
 fn decode_6and2_stream(encoded: &[u8]) -> [u8; 256] {
@@ -250,36 +249,37 @@ fn test_io_switches() {
 }
 
 #[test]
-fn test_write_sector_raw_updates_raw_and_file() {
+fn test_write_sector_raw_updates_raw_and_file() -> TestResult {
     let raw = vec![0u8; DSK_SIZE];
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
 
     let mut sector = [0u8; 256];
     for (i, b) in sector.iter_mut().enumerate() {
         *b = (i as u8).wrapping_mul(3).wrapping_add(7);
     }
 
-    disk.write_sector_raw(0, 0, 0, &sector).unwrap();
+    disk.write_sector_raw(0, 0, 0, &sector)?;
 
     let read_back = disk.read_sector_raw(0, 0, 0).unwrap();
     assert_eq!(read_back, sector);
 
-    let persisted = fs::read(path).unwrap();
+    let persisted = fs::read(path)?;
     assert_eq!(&persisted[..256], &sector);
+    Ok(())
 }
 
 #[test]
-fn test_q6_q7_write_mode_writes_nibble_stream() {
+fn test_q6_q7_write_mode_writes_nibble_stream() -> TestResult {
     let raw = vec![0u8; DSK_SIZE];
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
 
     disk.io_write(0xC0E9, 0x00);
     disk.io_write(0xC0ED, 0x00);
@@ -289,35 +289,37 @@ fn test_q6_q7_write_mode_writes_nibble_stream() {
     let write_pos = disk.drives[0].byte_position;
     disk.io_write(0xC0EF, 0xA5);
     assert_eq!(disk.drives[0].nibble_data[track][write_pos], 0xA5);
+    Ok(())
 }
 
 #[test]
-fn test_nibble_to_raw_sync_roundtrip() {
+fn test_nibble_to_raw_sync_roundtrip() -> TestResult {
     let mut raw = vec![0u8; DSK_SIZE];
     for (i, byte) in raw.iter_mut().enumerate() {
         *byte = (i as u8).wrapping_mul(17).wrapping_add(43);
     }
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
 
     let original_sector = disk.read_sector_raw(0, 0, 0).unwrap();
 
     disk.drives[0].dirty = true;
     disk.drives[0].dirty_tracks[0] = true;
-    disk.sync_nibble_to_raw(0).unwrap();
+    disk.sync_nibble_to_raw(0)?;
 
     let after_sync = disk.read_sector_raw(0, 0, 0).unwrap();
     assert_eq!(original_sector, after_sync);
 
-    let persisted = fs::read(path).unwrap();
+    let persisted = fs::read(path)?;
     assert_eq!(&persisted[..256], &original_sector[..]);
+    Ok(())
 }
 
 #[test]
-fn test_decode_nibblized_track() {
+fn test_decode_nibblized_track() -> TestResult {
     let mut raw = [0u8; DSK_SIZE];
     for (i, byte) in raw.iter_mut().enumerate() {
         *byte = (i as u8).wrapping_add(1);
@@ -328,10 +330,11 @@ fn test_decode_nibblized_track() {
 
     let mut decoded = [0u8; DSK_SIZE];
     for track in 0..TRACK_COUNT {
-        decode_nibblized_track(&nibble_tracks[track], &mut decoded, track).unwrap();
+        decode_nibblized_track(&nibble_tracks[track], &mut decoded, track)?;
     }
 
     assert_eq!(raw, decoded);
+    Ok(())
 }
 
 #[test]
@@ -349,29 +352,30 @@ fn test_decode_nibblized_track_rejects_corrupt_data() {
 }
 
 #[test]
-fn test_sync_preserves_write_protection() {
+fn test_sync_preserves_write_protection() -> TestResult {
     let raw = vec![0u8; DSK_SIZE];
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
     disk.drives[0].write_protected = true;
     disk.drives[0].dirty = true;
     disk.drives[0].dirty_tracks[0] = true;
 
     let result = disk.sync_nibble_to_raw(0);
     assert!(matches!(result, Err(Error::DiskWriteProtected)));
+    Ok(())
 }
 
 #[test]
-fn test_motor_off_syncs_nibble_to_raw() {
+fn test_motor_off_syncs_nibble_to_raw() -> TestResult {
     let raw = vec![0u8; DSK_SIZE];
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
 
     disk.drives[0].write_protected = false;
 
@@ -388,40 +392,42 @@ fn test_motor_off_syncs_nibble_to_raw() {
     disk.io_write(0xC0E8, 0x00);
 
     assert!(!disk.drives[0].dirty);
+    Ok(())
 }
 
 #[test]
-fn test_flush_all_drives() {
+fn test_flush_all_drives() -> TestResult {
     let raw1 = vec![0u8; DSK_SIZE];
     let raw2 = vec![0xFFu8; DSK_SIZE];
-    let temp1 = write_temp_dsk(&raw1);
-    let temp2 = write_temp_dsk(&raw2);
+    let temp1 = write_temp_dsk(&raw1)?;
+    let temp2 = write_temp_dsk(&raw2)?;
     let path1 = temp1.path();
     let path2 = temp2.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path1, 0).unwrap();
-    disk.load_disk(path2, 1).unwrap();
+    disk.load_disk(path1, 0)?;
+    disk.load_disk(path2, 1)?;
 
     disk.drives[0].dirty = true;
     disk.drives[1].dirty = true;
     disk.drives[0].dirty_tracks[0] = true;
     disk.drives[1].dirty_tracks[0] = true;
 
-    disk.flush_all_drives().unwrap();
+    disk.flush_all_drives()?;
 
     assert!(!disk.drives[0].dirty);
     assert!(!disk.drives[1].dirty);
+    Ok(())
 }
 
 #[test]
-fn test_sync_failure_keeps_dirty_state_for_retry() {
+fn test_sync_failure_keeps_dirty_state_for_retry() -> TestResult {
     let raw = vec![0u8; DSK_SIZE];
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
 
     disk.drives[0].dirty = true;
     disk.drives[0].dirty_tracks[0] = true;
@@ -431,16 +437,17 @@ fn test_sync_failure_keeps_dirty_state_for_retry() {
     assert!(result.is_err());
     assert!(disk.drives[0].dirty);
     assert!(disk.drives[0].dirty_tracks[0]);
+    Ok(())
 }
 
 #[test]
-fn test_take_last_error_on_motor_off_sync_failure() {
+fn test_take_last_error_on_motor_off_sync_failure() -> TestResult {
     let raw = vec![0u8; DSK_SIZE];
-    let temp = write_temp_dsk(&raw);
+    let temp = write_temp_dsk(&raw)?;
     let path = temp.path();
 
     let mut disk = DiskII::new();
-    disk.load_disk(path, 0).unwrap();
+    disk.load_disk(path, 0)?;
     disk.drives[0].dirty = true;
     disk.drives[0].dirty_tracks[0] = true;
     disk.drives[0].image_path = Some(PathBuf::from("/definitely/missing/a2vm-switch-fail.dsk"));
@@ -451,4 +458,5 @@ fn test_take_last_error_on_motor_off_sync_failure() {
     let err = disk.take_last_error();
     assert!(matches!(err, Some(Error::Io(_))));
     assert!(disk.take_last_error().is_none());
+    Ok(())
 }

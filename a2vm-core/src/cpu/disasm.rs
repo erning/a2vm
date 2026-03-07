@@ -78,8 +78,8 @@ mod tests {
     #[test]
     fn formats_immediate() {
         let mut mem = FlatMemory::new();
-        mem.data[0x400] = 0xA9;
-        mem.data[0x401] = 0x7F;
+        mem[0x400] = 0xA9;
+        mem[0x401] = 0x7F;
 
         let (line, size) = disasm(&mem, 0x400);
         assert_eq!(line, "LDA #$7F");
@@ -89,9 +89,9 @@ mod tests {
     #[test]
     fn formats_absolute_indexed() {
         let mut mem = FlatMemory::new();
-        mem.data[0x200] = 0xBD;
-        mem.data[0x201] = 0x34;
-        mem.data[0x202] = 0x12;
+        mem[0x200] = 0xBD;
+        mem[0x201] = 0x34;
+        mem[0x202] = 0x12;
 
         let (line, size) = disasm(&mem, 0x200);
         assert_eq!(line, "LDA $1234,X");
@@ -101,8 +101,8 @@ mod tests {
     #[test]
     fn formats_relative_target() {
         let mut mem = FlatMemory::new();
-        mem.data[0x1000] = 0xD0;
-        mem.data[0x1001] = 0xFE;
+        mem[0x1000] = 0xD0;
+        mem[0x1001] = 0xFE;
 
         let (line, size) = disasm(&mem, 0x1000);
         assert_eq!(line, "BNE $1000");

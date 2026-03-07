@@ -12,12 +12,12 @@ fn run_steps(cpu: &mut Cpu, mem: &mut FlatMemory, count: usize) {
 #[test]
 fn adc_decimal_sets_nz_from_binary_result() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0xF8;
-    mem.data[0x0001] = 0x18;
-    mem.data[0x0002] = 0xA9;
-    mem.data[0x0003] = 0x50;
-    mem.data[0x0004] = 0x69;
-    mem.data[0x0005] = 0x50;
+    mem[0x0000] = 0xF8;
+    mem[0x0001] = 0x18;
+    mem[0x0002] = 0xA9;
+    mem[0x0003] = 0x50;
+    mem[0x0004] = 0x69;
+    mem[0x0005] = 0x50;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -32,12 +32,12 @@ fn adc_decimal_sets_nz_from_binary_result() {
 #[test]
 fn sbc_decimal_sets_nz_from_binary_result() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0xF8;
-    mem.data[0x0001] = 0x38;
-    mem.data[0x0002] = 0xA9;
-    mem.data[0x0003] = 0x00;
-    mem.data[0x0004] = 0xE9;
-    mem.data[0x0005] = 0x01;
+    mem[0x0000] = 0xF8;
+    mem[0x0001] = 0x38;
+    mem[0x0002] = 0xA9;
+    mem[0x0003] = 0x00;
+    mem[0x0004] = 0xE9;
+    mem[0x0005] = 0x01;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -52,15 +52,15 @@ fn sbc_decimal_sets_nz_from_binary_result() {
 #[test]
 fn asl_memory_sets_carry_and_result() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x06;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x81;
+    mem[0x0000] = 0x06;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x81;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x02);
+    assert_eq!(mem[0x0010], 0x02);
     assert!(cpu.p.get(C));
     assert!(!cpu.p.get(N));
     assert!(!cpu.p.get(Z));
@@ -69,8 +69,8 @@ fn asl_memory_sets_carry_and_result() {
 #[test]
 fn beq_cross_page_adds_extra_cycle() {
     let mut mem = FlatMemory::new();
-    mem.data[0x00FE] = 0xF0;
-    mem.data[0x00FF] = 0xFE;
+    mem[0x00FE] = 0xF0;
+    mem[0x00FF] = 0xFE;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x00FE;
@@ -84,12 +84,12 @@ fn beq_cross_page_adds_extra_cycle() {
 #[test]
 fn jmp_indirect_wraps_high_byte_within_page() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0200] = 0x6C;
-    mem.data[0x0201] = 0xFF;
-    mem.data[0x0202] = 0x10;
-    mem.data[0x10FF] = 0x34;
-    mem.data[0x1000] = 0x12;
-    mem.data[0x1100] = 0x99;
+    mem[0x0200] = 0x6C;
+    mem[0x0201] = 0xFF;
+    mem[0x0202] = 0x10;
+    mem[0x10FF] = 0x34;
+    mem[0x1000] = 0x12;
+    mem[0x1100] = 0x99;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0200;
@@ -103,9 +103,9 @@ fn jmp_indirect_wraps_high_byte_within_page() {
 #[test]
 fn lax_loads_a_and_x_and_sets_flags() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0xA7;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x42;
+    mem[0x0000] = 0xA7;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x42;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -120,9 +120,9 @@ fn lax_loads_a_and_x_and_sets_flags() {
 #[test]
 fn lax_sets_negative_flag() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0xA7;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x80;
+    mem[0x0000] = 0xA7;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x80;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -137,9 +137,9 @@ fn lax_sets_negative_flag() {
 #[test]
 fn sax_zeropage_stores_a_and_x() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x87;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0xFF;
+    mem[0x0000] = 0x87;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0xFF;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -147,17 +147,17 @@ fn sax_zeropage_stores_a_and_x() {
     cpu.x = 0x0F;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x0F);
+    assert_eq!(mem[0x0010], 0x0F);
 }
 
 #[test]
 fn sax_indirect_x_stores_a_and_x() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x83;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0011] = 0x00;
-    mem.data[0x0012] = 0x20;
-    mem.data[0x2000] = 0xFF;
+    mem[0x0000] = 0x83;
+    mem[0x0001] = 0x10;
+    mem[0x0011] = 0x00;
+    mem[0x0012] = 0x20;
+    mem[0x2000] = 0xFF;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -165,16 +165,16 @@ fn sax_indirect_x_stores_a_and_x() {
     cpu.a = 0xAA;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x2000], 0xAA & 0x01);
+    assert_eq!(mem[0x2000], 0xAA & 0x01);
 }
 
 #[test]
 fn sax_absolute_stores_a_and_x() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x8F;
-    mem.data[0x0001] = 0x00;
-    mem.data[0x0002] = 0x30;
-    mem.data[0x3000] = 0xFF;
+    mem[0x0000] = 0x8F;
+    mem[0x0001] = 0x00;
+    mem[0x0002] = 0x30;
+    mem[0x3000] = 0xFF;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -182,22 +182,22 @@ fn sax_absolute_stores_a_and_x() {
     cpu.x = 0xAA;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x3000], 0x55 & 0xAA);
+    assert_eq!(mem[0x3000], 0x55 & 0xAA);
 }
 
 #[test]
 fn dcp_decrements_and_compares() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0xC7;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x05;
+    mem[0x0000] = 0xC7;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x05;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
     cpu.a = 0x04;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x04);
+    assert_eq!(mem[0x0010], 0x04);
     assert!(cpu.p.get(C));
     assert!(cpu.p.get(Z));
     assert!(!cpu.p.get(N));
@@ -206,9 +206,9 @@ fn dcp_decrements_and_compares() {
 #[test]
 fn isc_increments_and_sbc() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0xE7;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x05;
+    mem[0x0000] = 0xE7;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x05;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -216,23 +216,23 @@ fn isc_increments_and_sbc() {
     cpu.a = 0x10;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x06);
+    assert_eq!(mem[0x0010], 0x06);
     assert_eq!(cpu.a, 0x0A);
 }
 
 #[test]
 fn slo_shifts_left_and_ora() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x07;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x81;
+    mem[0x0000] = 0x07;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x81;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
     cpu.a = 0x01;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x02);
+    assert_eq!(mem[0x0010], 0x02);
     assert_eq!(cpu.a, 0x03);
     assert!(cpu.p.get(C));
     assert!(!cpu.p.get(N));
@@ -241,9 +241,9 @@ fn slo_shifts_left_and_ora() {
 #[test]
 fn rla_rotates_left_and_ands() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x27;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x81;
+    mem[0x0000] = 0x27;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x81;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -251,7 +251,7 @@ fn rla_rotates_left_and_ands() {
     cpu.a = 0xFF;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x02);
+    assert_eq!(mem[0x0010], 0x02);
     assert_eq!(cpu.a, 0x02);
     assert!(cpu.p.get(C));
     assert!(!cpu.p.get(N));
@@ -260,9 +260,9 @@ fn rla_rotates_left_and_ands() {
 #[test]
 fn rra_rotates_right_and_adc() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x67;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x82;
+    mem[0x0000] = 0x67;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x82;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
@@ -271,7 +271,7 @@ fn rra_rotates_right_and_adc() {
     cpu.step(&mut mem);
 
     // 0x82 ROR with carry_in=1: (0x82 >> 1) | 0x80 = 0x41 | 0x80 = 0xC1
-    assert_eq!(mem.data[0x0010], 0xC1);
+    assert_eq!(mem[0x0010], 0xC1);
     // ADC: 0x10 + 0xC1 + 0(new carry from ROR) = 0xD1
     assert_eq!(cpu.a, 0xD1);
     assert!(!cpu.p.get(C));
@@ -280,16 +280,16 @@ fn rra_rotates_right_and_adc() {
 #[test]
 fn sre_shifts_right_and_eors() {
     let mut mem = FlatMemory::new();
-    mem.data[0x0000] = 0x47;
-    mem.data[0x0001] = 0x10;
-    mem.data[0x0010] = 0x82;
+    mem[0x0000] = 0x47;
+    mem[0x0001] = 0x10;
+    mem[0x0010] = 0x82;
 
     let mut cpu = Cpu::new();
     cpu.pc = 0x0000;
     cpu.a = 0xFF;
     cpu.step(&mut mem);
 
-    assert_eq!(mem.data[0x0010], 0x41);
+    assert_eq!(mem[0x0010], 0x41);
     assert_eq!(cpu.a, 0xBE);
     assert!(!cpu.p.get(C));
 }

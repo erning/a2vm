@@ -11,6 +11,10 @@ use addressing::{AddrMode, Operand, Resolved};
 use opcodes::{Mnemonic, OPCODES};
 use status::{Status, C, D, I, N, V, Z};
 
+/// Base address of the 6502 hardware stack page.
+const STACK_PAGE: u16 = 0x0100;
+
+#[derive(Debug)]
 pub struct Cpu {
     a: u8,
     x: u8,
@@ -229,7 +233,7 @@ impl Cpu {
     // -- Stack --
 
     fn push<B: Bus>(&mut self, bus: &mut B, val: u8) {
-        bus.write(0x0100 | self.sp as u16, val);
+        bus.write(STACK_PAGE | self.sp as u16, val);
         self.sp = self.sp.wrapping_sub(1);
     }
 
@@ -240,7 +244,7 @@ impl Cpu {
 
     fn pull<B: Bus>(&mut self, bus: &mut B) -> u8 {
         self.sp = self.sp.wrapping_add(1);
-        bus.read(0x0100 | self.sp as u16)
+        bus.read(STACK_PAGE | self.sp as u16)
     }
 
     fn pull_word<B: Bus>(&mut self, bus: &mut B) -> u16 {
@@ -365,7 +369,8 @@ impl Cpu {
         match resolved.operand {
             Operand::Address(addr) => bus.read(addr),
             _ => {
-                unreachable!("read_operand expected address operand")
+                debug_assert!(false, "read_operand expected address operand");
+                0
             }
         }
     }
@@ -374,7 +379,8 @@ impl Cpu {
         match resolved.operand {
             Operand::Address(addr) => addr,
             _ => {
-                unreachable!("addr_of expected address operand")
+                debug_assert!(false, "addr_of expected address operand");
+                0
             }
         }
     }

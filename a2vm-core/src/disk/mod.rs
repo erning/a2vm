@@ -78,6 +78,19 @@ impl DiskII {
     }
 }
 
+impl std::fmt::Debug for DiskII {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiskII")
+            .field("selected_drive", &self.selected_drive)
+            .field("half_track", &self.half_track)
+            .field("motor_on", &self.motor_on)
+            .field("q6", &self.q6)
+            .field("q7", &self.q7)
+            .field("slot_rom_loaded", &self.slot_rom_loaded)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Default for DiskII {
     fn default() -> Self {
         Self::new()

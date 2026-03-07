@@ -55,7 +55,23 @@ pub struct BusState {
     display_mode_gen: u8,  // Incremented on display mode switch changes
 }
 
+impl std::fmt::Debug for BusState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BusState")
+            .field("display", &self.display)
+            .field("disk", &self.disk)
+            .field("bus_cycle", &self.bus_cycle)
+            .field("disk_controller_enabled", &self.disk_controller_enabled)
+            .field("fast_disk", &self.fast_disk)
+            .field("rom_loaded", &self.rom_loaded)
+            .field("kbd_latch", &self.kbd_latch)
+            .field("video_dirty", &self.video_dirty)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Apple II emulator: CPU + bus (RAM/ROM/IO).
+#[derive(Debug)]
 pub struct AppleII {
     pub cpu: Cpu,
     pub bus: BusState,

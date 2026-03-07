@@ -9,7 +9,7 @@ fn klaus_dormann_functional_test() {
     let bin = include_bytes!("data/6502_functional_test.bin");
 
     let mut mem = FlatMemory::new();
-    mem.data[..bin.len()].copy_from_slice(bin);
+    mem.as_mut_slice()[..bin.len()].copy_from_slice(bin);
 
     let mut cpu = Cpu::new();
     cpu.set_pc(0x0400);

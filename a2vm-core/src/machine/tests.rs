@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
 struct TempFile {
     path: PathBuf,
 }
@@ -19,26 +21,20 @@ impl Drop for TempFile {
     }
 }
 
-fn write_temp_file(bytes: &[u8], suffix: &str) -> TempFile {
+fn write_temp_file(bytes: &[u8], suffix: &str) -> std::result::Result<TempFile, Box<dyn std::error::Error>> {
     let mut path = std::env::temp_dir();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     path.push(format!("a2vm-rom-test-{nanos}-{suffix}.bin"));
-    fs::write(&path, bytes).unwrap();
-    TempFile { path }
+    fs::write(&path, bytes)?;
+    Ok(TempFile { path })
 }
 
-fn write_temp_disk(bytes: &[u8], suffix: &str) -> TempFile {
+fn write_temp_disk(bytes: &[u8], suffix: &str) -> std::result::Result<TempFile, Box<dyn std::error::Error>> {
     let mut path = std::env::temp_dir();
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
+    let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     path.push(format!("a2vm-disk-test-{nanos}-{suffix}.dsk"));
-    fs::write(&path, bytes).unwrap();
-    TempFile { path }
+    fs::write(&path, bytes)?;
+    Ok(TempFile { path })
 }
 
 fn require_paths(paths: &[&std::path::Path]) -> bool {
@@ -109,20 +105,21 @@ fn test_speaker_toggle_produces_pcm() {
 }
 
 #[test]
-fn test_disk_controller_disable_hides_slot6() {
+fn test_disk_controller_disable_hides_slot6() -> TestResult {
     let mut rom = vec![0u8; 0x5000];
     rom[0x1600] = 0xD5;
     rom[0x16FF] = 0xAA;
-    let temp = write_temp_file(&rom, "20k-disable");
+    let temp = write_temp_file(&rom, "20k-disable")?;
 
     let mut apple = AppleII::new();
-    apple.load_rom(temp.path()).unwrap();
+    apple.load_rom(temp.path())?;
     apple.set_disk_controller_enabled(true);
     assert_eq!(apple.read(0xC600), 0xD5);
 
     apple.set_disk_controller_enabled(false);
     assert_eq!(apple.read(0xC600), 0x00);
     assert_eq!(apple.read(0xC0EC), 0x00);
+    Ok(())
 }
 
 #[test]
@@ -209,18 +206,18 @@ fn test_dos33_boot_progresses_to_track2() {
 }
 
 #[test]
-fn test_rwts_write_trap_writes_sector_data() {
+fn test_rwts_write_trap_writes_sector_data() -> TestResult {
     let mut rom = vec![0u8; 0x5000];
     rom[0x2FFC] = 0x00;
     rom[0x2FFD] = 0xD0;
-    let rom_temp = write_temp_file(&rom, "rwts-write-rom");
+    let rom_temp = write_temp_file(&rom, "rwts-write-rom")?;
 
     let raw_disk = vec![0u8; 143_360];
-    let disk_temp = write_temp_disk(&raw_disk, "rwts-write-disk");
+    let disk_temp = write_temp_disk(&raw_disk, "rwts-write-disk")?;
 
     let mut apple = AppleII::new();
-    apple.load_rom(rom_temp.path()).unwrap();
-    apple.load_disk(disk_temp.path()).unwrap();
+    apple.load_rom(rom_temp.path())?;
+    apple.load_disk(disk_temp.path())?;
 
     let iob = 0x0200u16;
     let buf = 0x0300u16;
@@ -256,6 +253,7 @@ fn test_rwts_write_trap_writes_sector_data() {
     for (i, &actual) in sector.iter().enumerate() {
         assert_eq!(actual, (i as u8).wrapping_mul(5).wrapping_add(1));
     }
+    Ok(())
 }
 
 #[test]
@@ -292,19 +290,20 @@ fn test_step_rwts_trap_advances_cpu_cycles() {
 }
 
 #[test]
-fn test_12k_rom_clears_slot_rom() {
+fn test_12k_rom_clears_slot_rom() -> TestResult {
     let mut rom_20k = vec![0u8; 0x5000];
     rom_20k[0x1600] = 0xD5;
     rom_20k[0x16FF] = 0xAA;
 
     let mut apple = AppleII::new();
-    apple.load_rom_data(&rom_20k).unwrap();
+    apple.load_rom_data(&rom_20k)?;
     apple.set_disk_controller_enabled(true);
     assert_eq!(apple.read(0xC600), 0xD5);
     assert_eq!(apple.read(0xC6FF), 0xAA);
 
     let rom_12k = vec![0xAAu8; 0x3000];
-    apple.load_rom_data(&rom_12k).unwrap();
+    apple.load_rom_data(&rom_12k)?;
     assert_eq!(apple.read(0xC600), 0x00);
     assert_eq!(apple.read(0xC6FF), 0x00);
+    Ok(())
 }

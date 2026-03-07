@@ -270,13 +270,30 @@ fn render_hires_scanlines_rgba(
     }
 }
 
+// Scanline CRT simulation constants
+const SCANLINE_FLICKER_BASE: f32 = 0.985;
+const SCANLINE_FLICKER_RANGE: f32 = 0.015;
+const SCANLINE_FLICKER_SPEED: f32 = 0.11;
+const SCANLINE_WOBBLE_AMP: f32 = 0.01;
+const SCANLINE_WOBBLE_SPATIAL: f32 = 0.35;
+const SCANLINE_WOBBLE_TEMPORAL: f32 = 0.07;
+const SCANLINE_DARK_BASE: f32 = 0.2;
+const SCANLINE_DARK_LUM: f32 = 0.75;
+const SCANLINE_BRIGHT_BASE: f32 = 0.96;
+const SCANLINE_BRIGHT_LUM: f32 = 0.03;
+const SCANLINE_MIN_KEEP: f32 = 0.35;
+
 fn apply_scanlines(rgba: &mut [u8], frame_phase: u64) {
-    let global_flicker = 0.985 + 0.015 * ((frame_phase as f32) * 0.11).sin();
+    let global_flicker = SCANLINE_FLICKER_BASE
+        + SCANLINE_FLICKER_RANGE * ((frame_phase as f32) * SCANLINE_FLICKER_SPEED).sin();
     let line_offset = ((frame_phase >> 4) & 1) as usize;
 
     for y in 0..RGBA_HEIGHT {
         let scanline = ((y + line_offset) & 1) == 1;
-        let row_wobble = 0.01 * ((y as f32) * 0.35 + (frame_phase as f32) * 0.07).sin();
+        let row_wobble = SCANLINE_WOBBLE_AMP
+            * ((y as f32) * SCANLINE_WOBBLE_SPATIAL
+                + (frame_phase as f32) * SCANLINE_WOBBLE_TEMPORAL)
+                .sin();
 
         for x in 0..RGBA_WIDTH {
             let idx = (y * RGBA_WIDTH + x) * 4;
@@ -286,11 +303,11 @@ fn apply_scanlines(rgba: &mut [u8], frame_phase: u64) {
 
             let lum = (rgba[idx].max(rgba[idx + 1]).max(rgba[idx + 2]) as f32) * (1.0 / 255.0);
             let mut keep = if scanline {
-                0.2 + 0.75 * lum + row_wobble
+                SCANLINE_DARK_BASE + SCANLINE_DARK_LUM * lum + row_wobble
             } else {
-                0.96 + 0.03 * lum
+                SCANLINE_BRIGHT_BASE + SCANLINE_BRIGHT_LUM * lum
             };
-            keep = (keep * global_flicker).clamp(0.35, 1.0);
+            keep = (keep * global_flicker).clamp(SCANLINE_MIN_KEEP, 1.0);
 
             let gain = (keep * 256.0) as u16;
             rgba[idx] = ((rgba[idx] as u16 * gain) >> 8) as u8;

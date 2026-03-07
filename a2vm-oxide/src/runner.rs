@@ -91,23 +91,7 @@ impl EmulatorRunner {
     /// - `rom_data`: ROM data (12K or 20K)
     /// - `disks`: Disk image paths to load
     /// - `fast_disk`: Enable fast disk mode (RWTS trap)
-    #[cfg(not(feature = "audio"))]
-    pub fn new(
-        rom_data: Cow<'_, [u8]>,
-        disks: &[&Path],
-        fast_disk: bool,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Self::new_inner(rom_data, disks, fast_disk, false)
-    }
-
-    /// Create a new emulator runner with the given ROM and disk configuration.
-    ///
-    /// # Arguments
-    /// - `rom_data`: ROM data (12K or 20K)
-    /// - `disks`: Disk image paths to load
-    /// - `fast_disk`: Enable fast disk mode (RWTS trap)
-    /// - `noise`: Enable mechanical noise simulation
-    #[cfg(feature = "audio")]
+    /// - `noise`: Enable mechanical noise simulation (requires "audio" feature)
     pub fn new(
         rom_data: Cow<'_, [u8]>,
         disks: &[&Path],
@@ -326,23 +310,26 @@ impl EmulatorRunner {
             if let Some(evt) = event {
                 match evt {
                     MechanicalEvent::MotorStart => {
-                        let cursor = Cursor::new(MOVE_ARM_WAV);
-                        if let Ok(source) = Decoder::new(cursor) {
-                            sink.append(source.repeat_infinite());
-                        }
+                        Self::play_loop_sound(sink);
                     }
                     MechanicalEvent::TrackSeek => {
                         sink.stop();
-                        let cursor = Cursor::new(MOVE_ARM_WAV);
-                        if let Ok(source) = Decoder::new(cursor) {
-                            sink.append(source.repeat_infinite());
-                        }
+                        Self::play_loop_sound(sink);
                     }
                     MechanicalEvent::MotorStop => {
                         sink.stop();
                     }
                 }
             }
+        }
+    }
+
+    /// Play a looping mechanical sound on the given sink.
+    #[cfg(feature = "audio")]
+    fn play_loop_sound(sink: &Sink) {
+        let cursor = Cursor::new(MOVE_ARM_WAV);
+        if let Ok(source) = Decoder::new(cursor) {
+            sink.append(source.repeat_infinite());
         }
     }
 

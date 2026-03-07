@@ -2,10 +2,16 @@ use std::collections::VecDeque;
 
 use crate::timing::CPU_HZ;
 
+/// Speaker output amplitude (±0.25 maps to half volume).
+const SPEAKER_AMPLITUDE: f32 = 0.25;
+/// High-pass filter coefficient (~35 Hz cutoff at 44.1 kHz).
+const HP_COEFFICIENT: f32 = 0.995;
+
 /// Speaker toggle timeline -> PCM conversion.
 ///
 /// The Apple II speaker is a 1-bit device toggled by accesses to $C030.
 /// We record toggle cycle timestamps and synthesize audio samples from them.
+#[derive(Debug)]
 pub struct Speaker {
     state: bool,
     toggles: VecDeque<u64>,
@@ -87,9 +93,13 @@ impl Speaker {
                 }
             }
 
-            let raw = if self.state { 0.25 } else { -0.25 };
+            let raw = if self.state {
+                SPEAKER_AMPLITUDE
+            } else {
+                -SPEAKER_AMPLITUDE
+            };
             // High-pass to remove DC offset from 1-bit speaker state.
-            let y = raw - self.hp_prev_x + 0.995 * self.hp_prev_y;
+            let y = raw - self.hp_prev_x + HP_COEFFICIENT * self.hp_prev_y;
             self.hp_prev_x = raw;
             self.hp_prev_y = y;
             out.push(y);

@@ -2,7 +2,7 @@ use crate::bus::Bus;
 
 /// Flat 64K RAM — used for standalone CPU testing (e.g., Klaus Dormann test suite).
 pub struct FlatMemory {
-    pub data: Box<[u8; 65536]>,
+    data: Box<[u8; 65536]>,
 }
 
 impl FlatMemory {
@@ -11,11 +11,32 @@ impl FlatMemory {
             data: Box::new([0u8; 65536]),
         }
     }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.data[..]
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.data[..]
+    }
 }
 
 impl Default for FlatMemory {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl std::ops::Index<usize> for FlatMemory {
+    type Output = u8;
+    fn index(&self, index: usize) -> &u8 {
+        &self.data[index]
+    }
+}
+
+impl std::ops::IndexMut<usize> for FlatMemory {
+    fn index_mut(&mut self, index: usize) -> &mut u8 {
+        &mut self.data[index]
     }
 }
 
