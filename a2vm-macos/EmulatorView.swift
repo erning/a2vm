@@ -43,7 +43,6 @@ final class EmulatorView: NSView, MTKViewDelegate {
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // No action needed — Metal handles scaling
     }
 
     func draw(in view: MTKView) {
