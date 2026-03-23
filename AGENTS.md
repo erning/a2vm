@@ -16,8 +16,10 @@
 | Shared CLI args | `a2vm-oxide/src/cli.rs` | `SharedArgs`, embedded default ROM |
 | Shared frontend runtime | `a2vm-oxide/src/runner.rs` | `EmulatorRunner` for emulation/audio/noise/turbo |
 | Mechanical noise | `a2vm-oxide/src/noise.rs` | Disk motor/seek event tracking |
+| FFI C library | `a2vm-ffi/src/lib.rs` | C-compatible staticlib wrapping EmulatorRunner |
 | TUI runtime | `a2vm-tui/src/main.rs`, `a2vm-tui/src/cli.rs` | Braille display (140×48), terminal controls |
-| GUI runtime | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | Native window (280×192), color-mode options |
+| GUI runtime (cross-platform) | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | winit/pixels (to be replaced by native frontends) |
+| macOS native frontend | `a2vm-macos/` | Swift + AppKit + Metal, CRT effects |
 
 ## Project Structure
 
@@ -28,6 +30,10 @@
 **CPU-Bus Pattern:** `AppleII` owns `Cpu` and `BusState` directly. CPU executes against mutable bus.
 
 **Frontend Runtime Pattern:** TUI and GUI should delegate emulation loop concerns (cycle accumulation, turbo, audio, mechanical noise, flush-on-drop) to `a2vm_oxide::runner::EmulatorRunner`.
+
+**Native Frontend Pattern:** Platform-native frontends (macOS, etc.) link `a2vm-ffi` (C static library) rather than using Rust crates directly. `a2vm-gui` (winit/pixels) is the cross-platform fallback, to be replaced by native frontends per platform.
+
+**macOS Build:** `make macos-app` builds `a2vm-ffi` (Rust) + Metal shaders + Swift app → `a2vm-macos/build/A2VM.app`. Uses `swiftc` directly (no SPM/Xcode).
 
 **ROM Support:** Accepted ROM sizes are 12K (`0x3000`) and 20K (`0x5000`). Default ROM is embedded in `a2vm-oxide`.
 
@@ -76,13 +82,10 @@ cargo run -p a2vm-tui -- --rom roms/apple2p.rom --disk "disks/Apple DOS 3.3 Janu
 # TUI with fast-disk + mechanical noise
 cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk --noise
 
-# GUI --------------------------------------------------------
+# GUI (cross-platform, winit/pixels) -------------------------
 
 # Build GUI release (with audio)
 cargo build --release -p a2vm-gui
-
-# Build GUI without audio
-cargo build --release -p a2vm-gui --no-default-features
 
 # Run GUI with embedded ROM
 cargo run -p a2vm-gui
@@ -90,8 +93,16 @@ cargo run -p a2vm-gui
 # GUI with disk + monochrome scanlines
 cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --color-mode mono-scanlines
 
-# GUI with mechanical noise
-cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --noise
+# macOS native (Swift + Metal) --------------------------------
+
+# Build .app bundle
+make macos-app
+
+# Build and launch
+make run-app
+
+# Clean build artifacts
+make clean-macos
 ```
 
 ### CLI Reference

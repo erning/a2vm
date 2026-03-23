@@ -2,12 +2,14 @@
 
 ## Overview
 
-A2VM is a Rust workspace with one emulation core crate, one shared runtime/resources crate, and two frontend binaries.
+A2VM is a Rust workspace with an emulation core, shared runtime, FFI bridge, and multiple frontends.
 
 - `a2vm-core`: CPU, bus/machine integration, disk, video, audio, keyboard
 - `a2vm-oxide`: shared CLI, embedded assets, mechanical noise tracker, shared frontend runtime (`EmulatorRunner`)
+- `a2vm-ffi`: C-compatible static library wrapping `EmulatorRunner` for native frontends
 - `a2vm-tui`: terminal frontend (`ratatui` + `crossterm`)
-- `a2vm-gui`: native window frontend (`pixels` + `winit`)
+- `a2vm-gui`: cross-platform GUI (`pixels` + `winit`) — to be replaced by native frontends
+- `a2vm-macos`: macOS native frontend (Swift + AppKit + Metal)
 
 ## Workspace Layout
 
@@ -65,10 +67,23 @@ a2vm/
 │   └── src/
 │       ├── main.rs
 │       └── cli.rs
+├── a2vm-ffi/
+│   └── src/
+│       └── lib.rs              # C FFI: opaque A2VMEmulator handle + free functions
 ├── a2vm-gui/
 │   └── src/
 │       ├── main.rs
 │       └── cli.rs
+├── a2vm-macos/
+│   ├── Shaders.metal           # Metal shaders (passthrough, bloom, blur, CRT composite)
+│   ├── MetalRenderer.swift     # Multi-pass Metal pipeline with CRT effects
+│   ├── EmulatorController.swift # Swift wrapper around C FFI
+│   ├── EmulatorView.swift      # MTKViewDelegate + keyboard input
+│   ├── KeyMapper.swift         # NSEvent → Apple II ASCII
+│   ├── main.swift              # NSApplication entry point
+│   ├── a2vm-ffi-Bridging.h     # C header for FFI
+│   └── Info.plist              # App bundle metadata
+├── Makefile                    # Build targets for macOS native app
 └── docs/
     └── architecture.md
 ```
@@ -76,20 +91,22 @@ a2vm/
 ## Runtime Architecture
 
 ```text
-TUI (ratatui/crossterm)       GUI (winit/pixels)
-          |                              |
-          +--------------+---------------+
-                         |
-              a2vm-oxide::EmulatorRunner
-                         |
-                      AppleII
-                         |
-            +------------+------------+
-            |            |            |
-           CPU          Bus      Video/Audio/Disk
+TUI (ratatui/crossterm)    GUI (winit/pixels)    macOS (Swift+Metal)
+          |                        |                      |
+          |                        |               a2vm-ffi (C API)
+          |                        |                      |
+          +-----------+------------+----------------------+
+                      |
+           a2vm-oxide::EmulatorRunner
+                      |
+                   AppleII
+                      |
+         +------------+------------+
+         |            |            |
+        CPU          Bus      Video/Audio/Disk
 ```
 
-Both frontends use the same runner and machine APIs, so turbo timing, audio generation, mechanical noise behavior, and disk flushing semantics stay consistent.
+All frontends use the same runner and machine APIs. Native frontends (macOS, future Linux/Windows) link via `a2vm-ffi` C static library. The cross-platform `a2vm-gui` will be phased out as native frontends are completed.
 
 ## Core Modules (`a2vm-core`)
 
@@ -206,6 +223,48 @@ Responsibilities:
 - uses `EmulatorRunner` for emulation and runtime state
 - renders via `pixels` at 280×192
 - processes input through `winit`
+- cross-platform fallback; to be replaced by native frontends
+
+### `a2vm-ffi`
+
+C-compatible static library (`crate-type = ["staticlib"]`) wrapping `EmulatorRunner`.
+
+- opaque `A2VMEmulator` pointer pattern (create/destroy lifecycle)
+- ~10 free functions: `a2vm_create`, `a2vm_destroy`, `a2vm_tick`, `a2vm_reset`, `a2vm_key_press`, `a2vm_render_rgba`, `a2vm_video_dirty`, `a2vm_display_width`, `a2vm_display_height`
+- ROM embedded in library (via `a2vm-oxide::DEFAULT_ROM`)
+- audio handled internally by `EmulatorRunner` (rodio) — not exposed through FFI
+- hand-written C header: `a2vm-macos/a2vm-ffi-Bridging.h`
+
+### `a2vm-macos`
+
+Native macOS frontend: Swift + AppKit + Metal.
+
+**Build:** `make macos-app` (cargo → swiftc → xcrun metal → .app bundle). No SPM or Xcode project.
+
+**Metal rendering pipeline (multi-pass):**
+
+```text
+Source (280×192) → [Upscale 4x, nearest] → Intermediate (1120×768)
+                                                  ↓
+                                            [Bloom extract] → half-res → [Blur H] → [Blur V]
+                                                  ↓                                      ↓
+                                            [CRT Composite: distortion + scanlines + bloom + vignette]
+                                                  ↓
+                                              Drawable
+```
+
+**CRT effects** (all on by default, controlled by `CRTSettings`):
+- Bloom: bright-pass extraction + 9-tap Gaussian blur → additive glow
+- Scanlines: sharp dark bands via `smoothstep` aligned to 192 emulator rows
+- Barrel distortion: subtle screen curvature in UV space
+- Vignette: radial edge/corner darkening
+- Phosphor background: warm dark gray replaces pure black
+
+**Planned features:**
+- Menu bar (File: Open Disk/ROM, Eject; Machine: Reset, Turbo, Fast Disk; View: Color mode, Fullscreen)
+- NSOpenPanel for disk/ROM file loading
+- Status bar (bottom of window: PC, MHz, disk status)
+- App icon and proper .app bundle signing
 
 ## Build/Feature Model
 
@@ -220,5 +279,6 @@ Responsibilities:
 - `cargo test -p a2vm-core`: core behavior + module tests
 - `cargo test klaus_dormann`: 6502 functional test
 - `cargo build --no-default-features -p a2vm-tui -p a2vm-gui`: no-audio build validation
+- `make macos-app`: macOS native build (requires Xcode Command Line Tools)
 
 Core tests cover CPU behavior, disk persistence, ROM loading edge cases, keyboard/speaker semantics, and boot-path smoke checks.

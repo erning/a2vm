@@ -1,8 +1,10 @@
 # A2VM — Apple II / II+ Emulator
 
-A2VM is a Rust Apple II emulator with both terminal (TUI) and native window (GUI) frontends.
+A2VM is a Rust Apple II emulator with terminal (TUI), cross-platform GUI, and native macOS frontends.
 
 It includes a full NMOS 6502 core, Disk II support, TEXT/GR/HGR video, speaker audio, optional mechanical disk noise, and an embedded default Apple II+ ROM.
+
+The cross-platform GUI (`a2vm-gui`, winit/pixels) is being replaced by platform-native frontends for the best experience on each OS. The macOS native frontend (`a2vm-macos`) uses Swift, AppKit, and Metal with CRT display effects.
 
 ## Features
 
@@ -34,24 +36,42 @@ cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk"
 cargo run -p a2vm-tui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --fast-disk --noise
 ```
 
-### GUI
+### macOS Native
+
+```bash
+# Build .app bundle (requires Xcode Command Line Tools)
+make macos-app
+
+# Build and launch
+make run-app
+```
+
+The macOS frontend uses Metal for GPU-accelerated rendering with CRT display effects:
+
+- **Bloom** — phosphor glow around bright text
+- **Scanlines** — horizontal dark bands between pixel rows
+- **Barrel distortion** — subtle CRT screen curvature
+- **Vignette** — darkened edges/corners
+- **Phosphor background** — warm dark gray instead of pure black
+
+All settings controlled via `CRTSettings` in `MetalRenderer.swift`. ROM is embedded — no CLI arguments needed.
+
+**Planned features (not yet implemented):** menu bar (File/Machine/View), disk loading via NSOpenPanel, ROM selection, turbo/fast-disk toggle, color mode switching, status bar, fullscreen.
+
+### GUI (Cross-platform)
 
 ```bash
 # Build (audio enabled)
 cargo build --release -p a2vm-gui
-
-# Build without audio
-cargo build --release -p a2vm-gui --no-default-features
 
 # Run with embedded ROM
 cargo run -p a2vm-gui
 
 # Run with disk + scanlines
 cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --color-mode mono-scanlines
-
-# Two disks + fast-disk + noise
-cargo run -p a2vm-gui -- --disk "disks/Apple DOS 3.3 January 1983.dsk" --disk "disks/Programma.dsk" --fast-disk --noise
 ```
+
+> Note: `a2vm-gui` (winit/pixels) will be superseded by platform-native frontends.
 
 ## CLI Options
 
@@ -101,8 +121,10 @@ a2vm/
 ├── a2vm-core/     # CPU + machine + bus + video + audio + disk
 ├── a2vm-oxide/    # Shared CLI, noise, and shared frontend runtime (EmulatorRunner)
 │   └── assets/    # Embedded ROM and WAV assets
+├── a2vm-ffi/      # C-compatible static library (FFI for native frontends)
+├── a2vm-macos/    # macOS native frontend (Swift + AppKit + Metal)
 ├── a2vm-tui/      # Ratatui/crossterm frontend
-├── a2vm-gui/      # winit/pixels frontend
+├── a2vm-gui/      # winit/pixels frontend (cross-platform, to be replaced)
 └── docs/          # Architecture docs
 ```
 
