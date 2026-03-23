@@ -5,13 +5,13 @@
     <title>A2VM — Apple II Emulator</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; }
-        canvas { image-rendering: pixelated; }
+        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+        canvas { display: block; }
         #error { color: #f44; font-family: monospace; font-size: 16px; padding: 2em; }
     </style>
 </head>
 <body>
-    <canvas id="screen" width="840" height="576"></canvas>
+    <canvas id="screen"></canvas>
     <div id="error" style="display:none"></div>
     <script type="module" src="main.js"></script>
 </body>

@@ -1,6 +1,6 @@
 # A2VM — Apple II / II+ Emulator
 
-A2VM is a Rust Apple II emulator with terminal (TUI), cross-platform GUI, and native macOS frontends.
+A2VM is a Rust Apple II emulator with terminal (TUI), cross-platform GUI, native macOS, and WebAssembly frontends.
 
 It includes a full NMOS 6502 core, Disk II support, TEXT/GR/HGR video, speaker audio, optional mechanical disk noise, and an embedded default Apple II+ ROM.
 
@@ -57,6 +57,23 @@ The macOS frontend uses Metal for GPU-accelerated rendering with CRT display eff
 All settings controlled via `CRTSettings` in `MetalRenderer.swift`. ROM is embedded — no CLI arguments needed.
 
 **Planned features (not yet implemented):** menu bar (File/Machine/View), disk loading via NSOpenPanel, ROM selection, turbo/fast-disk toggle, color mode switching, status bar, fullscreen.
+
+### Web (WebAssembly + WebGPU)
+
+```bash
+# Build wasm (requires wasm-pack)
+wasm-pack build --target web a2vm-web
+
+# Serve locally
+cd a2vm-web && python3 -m http.server 8080
+# Open http://localhost:8080/www/
+```
+
+The web frontend compiles the emulator core to WebAssembly (67KB) and renders via WebGPU with the same CRT effects as the macOS version (WGSL shaders). Canvas auto-scales to fit the browser window.
+
+**Requirements:** Browser with WebGPU support (Chrome 113+, Edge 113+). WebGPU requires a secure context (HTTPS or localhost).
+
+**Planned features (not yet implemented):** audio (Web Audio API), disk loading (File API drag-and-drop), WebGL2 fallback for broader browser support.
 
 ### GUI (Cross-platform)
 
@@ -123,6 +140,7 @@ a2vm/
 │   └── assets/    # Embedded ROM and WAV assets
 ├── a2vm-ffi/      # C-compatible static library (FFI for native frontends)
 ├── a2vm-macos/    # macOS native frontend (Swift + AppKit + Metal)
+├── a2vm-web/      # WebAssembly + WebGPU frontend (browser)
 ├── a2vm-tui/      # Ratatui/crossterm frontend
 ├── a2vm-gui/      # winit/pixels frontend (cross-platform, to be replaced)
 └── docs/          # Architecture docs

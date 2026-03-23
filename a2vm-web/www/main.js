@@ -35,7 +35,30 @@ async function main() {
     const canvas = document.getElementById('screen');
     const ctx = canvas.getContext('webgpu');
     const format = navigator.gpu.getPreferredCanvasFormat();
-    ctx.configure({ device, format, alphaMode: 'opaque' });
+
+    const ASPECT = EMU_WIDTH / EMU_HEIGHT; // 280/192 ≈ 1.458
+
+    function resizeCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        const maxW = window.innerWidth;
+        const maxH = window.innerHeight;
+        let w, h;
+        if (maxW / maxH > ASPECT) {
+            h = maxH;
+            w = Math.floor(h * ASPECT);
+        } else {
+            w = maxW;
+            h = Math.floor(w / ASPECT);
+        }
+        canvas.style.width = w + 'px';
+        canvas.style.height = h + 'px';
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+        ctx.configure({ device, format, alphaMode: 'opaque' });
+    }
+
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
 
     // Load shaders
     const shaderCode = await (await fetch('shaders.wgsl')).text();

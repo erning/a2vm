@@ -10,6 +10,7 @@ A2VM is a Rust workspace with an emulation core, shared runtime, FFI bridge, and
 - `a2vm-tui`: terminal frontend (`ratatui` + `crossterm`)
 - `a2vm-gui`: cross-platform GUI (`pixels` + `winit`) — to be replaced by native frontends
 - `a2vm-macos`: macOS native frontend (Swift + AppKit + Metal)
+- `a2vm-web`: browser frontend (WebAssembly + WebGPU)
 
 ## Workspace Layout
 
@@ -83,6 +84,13 @@ a2vm/
 │   ├── main.swift              # NSApplication entry point
 │   ├── a2vm-ffi-Bridging.h     # C header for FFI
 │   └── Info.plist              # App bundle metadata
+├── a2vm-web/
+│   ├── src/
+│   │   └── lib.rs              # wasm-bindgen: Emulator wrapper (no Instant, no fs)
+│   └── www/
+│       ├── index.html          # Auto-scaling canvas
+│       ├── main.js             # WebGPU CRT pipeline + requestAnimationFrame loop
+│       └── shaders.wgsl        # WGSL shaders (passthrough, bloom, blur, CRT composite)
 ├── Makefile                    # Build targets for macOS native app
 └── docs/
     └── architecture.md
@@ -91,22 +99,24 @@ a2vm/
 ## Runtime Architecture
 
 ```text
-TUI (ratatui/crossterm)    GUI (winit/pixels)    macOS (Swift+Metal)
-          |                        |                      |
-          |                        |               a2vm-ffi (C API)
-          |                        |                      |
-          +-----------+------------+----------------------+
-                      |
-           a2vm-oxide::EmulatorRunner
-                      |
-                   AppleII
-                      |
-         +------------+------------+
-         |            |            |
-        CPU          Bus      Video/Audio/Disk
+TUI (ratatui/crossterm)    GUI (winit/pixels)    macOS (Swift+Metal)    Web (wasm+WebGPU)
+          |                        |                      |                      |
+          |                        |               a2vm-ffi (C API)        a2vm-core (direct)
+          |                        |                      |                      |
+          +-----------+------------+----------------------+------+               |
+                      |                                          |               |
+           a2vm-oxide::EmulatorRunner                     a2vm-oxide      (JS timing loop)
+                      |                                          |               |
+                      +------------------------------------------+---------------+
+                                              |
+                                           AppleII
+                                              |
+                                 +------------+------------+
+                                 |            |            |
+                                CPU          Bus      Video/Audio/Disk
 ```
 
-All frontends use the same runner and machine APIs. Native frontends (macOS, future Linux/Windows) link via `a2vm-ffi` C static library. The cross-platform `a2vm-gui` will be phased out as native frontends are completed.
+All frontends use the same emulation core (`AppleII`). Desktop frontends use `EmulatorRunner` for timing/audio. The web frontend calls `a2vm-core` directly — JS manages timing via `requestAnimationFrame` and WebGPU handles CRT rendering (avoiding `std::time::Instant` which is unavailable in wasm). Native frontends (macOS, future Linux/Windows) link via `a2vm-ffi` C static library. The cross-platform `a2vm-gui` will be phased out.
 
 ## Core Modules (`a2vm-core`)
 
@@ -265,6 +275,34 @@ Source (280×192) → [Upscale 4x, nearest] → Intermediate (1120×768)
 - NSOpenPanel for disk/ROM file loading
 - Status bar (bottom of window: PC, MHz, disk status)
 - App icon and proper .app bundle signing
+
+### `a2vm-web`
+
+Browser frontend: Rust emulator core compiled to WebAssembly + WebGPU rendering in JavaScript.
+
+**Architecture:** Rust side is a thin wasm-bindgen wrapper around `a2vm-core` (no `EmulatorRunner`, no `Instant`, no filesystem). JS side handles timing, keyboard input, and WebGPU rendering.
+
+**Build:** `wasm-pack build --target web a2vm-web` → `a2vm-web/pkg/` (67KB wasm).
+
+**WebGPU CRT pipeline (same structure as macOS Metal):**
+
+```text
+Source (280×192) → [Upscale 4x, nearest] → 1120×768
+    → [Bloom extract] → half-res → [Blur H] → [Blur V]
+    → [CRT Composite: distortion + scanlines + bloom + vignette]
+    → Canvas
+```
+
+WGSL shaders are direct translations of the Metal shaders. Per-pass uniform buffers (general, blurH, blurV) avoid the WebGPU constraint of single-buffer-per-submit.
+
+**Timing:** JS `requestAnimationFrame` loop calculates delta time, converts to CPU cycles (`dt_ms × 1023`), calls `emulator.run_cycles()`. No `std::time::Instant` dependency.
+
+**Requirements:** WebGPU (Chrome 113+, Edge 113+). Requires secure context (HTTPS or localhost).
+
+**Planned features:**
+- Audio via Web Audio API (AudioWorklet + PCM ring buffer)
+- Disk loading via File API drag-and-drop
+- WebGL2 fallback for browsers without WebGPU
 
 ## Build/Feature Model
 

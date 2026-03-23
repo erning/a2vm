@@ -20,6 +20,7 @@
 | TUI runtime | `a2vm-tui/src/main.rs`, `a2vm-tui/src/cli.rs` | Braille display (140×48), terminal controls |
 | GUI runtime (cross-platform) | `a2vm-gui/src/main.rs`, `a2vm-gui/src/cli.rs` | winit/pixels (to be replaced by native frontends) |
 | macOS native frontend | `a2vm-macos/` | Swift + AppKit + Metal, CRT effects |
+| Web frontend (wasm) | `a2vm-web/src/lib.rs`, `a2vm-web/www/` | wasm-bindgen + WebGPU, CRT effects |
 
 ## Project Structure
 
@@ -101,8 +102,14 @@ make macos-app
 # Build and launch
 make run-app
 
-# Clean build artifacts
-make clean-macos
+# Web (wasm + WebGPU) ----------------------------------------
+
+# Build wasm package
+wasm-pack build --target web a2vm-web
+
+# Serve locally
+cd a2vm-web && python3 -m http.server 8080
+# Open http://localhost:8080/www/
 ```
 
 ### CLI Reference

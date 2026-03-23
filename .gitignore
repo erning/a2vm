@@ -25,3 +25,4 @@ Thumbs.db
 *.dylib
 *.dll
 a2vm-macos/build/
+a2vm-web/pkg/
