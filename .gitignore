@@ -2,7 +2,7 @@
 .claude/
 roms/
 disks/
-worktrees/
+.worktrees/
 
 # Rust
 /target/
