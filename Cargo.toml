@@ -1,5 +1,5 @@
 [workspace]
-members = ["a2vm-core", "a2vm-oxide", "a2vm-tui", "a2vm-gui"]
+members = ["a2vm-core", "a2vm-oxide", "a2vm-tui", "a2vm-gui", "a2vm-ffi"]
 resolver = "2"
 
 [workspace.dependencies]

@@ -1,0 +1,16 @@
+[package]
+name = "a2vm-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+default = ["audio"]
+audio = ["dep:rodio", "a2vm-oxide/audio"]
+
+[dependencies]
+a2vm-core = { workspace = true }
+a2vm-oxide = { workspace = true, default-features = false }
+rodio = { workspace = true, optional = true }

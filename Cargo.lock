@@ -7,6 +7,15 @@ name = "a2vm-core"
 version = "0.1.0"
 
 [[package]]
+name = "a2vm-ffi"
+version = "0.1.0"
+dependencies = [
+ "a2vm-core",
+ "a2vm-oxide",
+ "rodio",
+]
+
+[[package]]
 name = "a2vm-gui"
 version = "0.1.0"
 dependencies = [
