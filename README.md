@@ -6,6 +6,12 @@ It includes a full NMOS 6502 core, Disk II support, TEXT/GR/HGR video, speaker a
 
 The cross-platform GUI (`a2vm-gui`, winit/pixels) is being replaced by platform-native frontends for the best experience on each OS. The macOS native frontend (`a2vm-macos`) uses Swift, AppKit, and Metal with CRT display effects.
 
+![Karateka running on the macOS frontend with CRT effects](docs/screenshots/karateka.webp)
+*macOS native — Metal renderer with bloom, scanlines, and barrel distortion*
+
+![Lode Runner rendered in the TUI frontend](docs/screenshots/loderunner.webp)
+*TUI — HGR rendered as Braille glyphs in the terminal*
+
 ## Features
 
 - Full 6502 core with 13 addressing modes, cycle accounting, BCD behavior, and key NMOS quirks
